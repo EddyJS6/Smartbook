@@ -107,6 +107,36 @@ Les langues proposées sont le français (`fra`), l’anglais (`eng`) et le polo
 
 Le cache du modèle améliore les analyses suivantes. Un premier chargement exige une connexion. Une utilisation totalement hors ligne après ce premier chargement dépend aussi de la disponibilité du worker et du cœur WebAssembly dans le cache HTTP du navigateur ; elle doit donc être vérifiée sur chaque version de Safari et n’est pas présentée comme une garantie absolue.
 
+## Détection et redressement de page
+
+Le scanner embarque la distribution autonome officielle **OpenCV.js 4.13.0** dans `public/vendor/opencv/4.13.0/opencv.js`. Sa source, sa licence Apache 2.0 et son empreinte SHA-256 sont documentées dans le `README.md` placé à côté du fichier. Le WebAssembly est incorporé dans ce JavaScript : le déploiement ne dépend donc pas d’un CDN OpenCV.
+
+OpenCV n’est chargé ni au démarrage de l’application, ni dans le thread principal. Le parcours scanner crée à la demande un unique worker classique, `public/workers/document-processing-worker.js`, qui charge la ressource locale avec `importScripts`. Les pixels RGBA transitent par des `ArrayBuffer` transférables afin d’éviter leur duplication entre le thread d’interface et le worker. Le décodage initial et l’encodage JPEG final restent dans Canvas, car ces API sont mieux prises en charge dans le contexte de la page.
+
+Le worker OpenCV est terminé lors d’une annulation, d’un nouveau fichier, d’un abandon, du démontage du scanner et après le transfert du passage vers la note. Chaque `cv.Mat`, `MatVector`, noyau morphologique et matrice de transformation est libéré dans un bloc `finally`. Le module Emscripten officiel expose temporairement une méthode `then` non standard ; le worker attend `cv.calledRun`, puis retire cette propriété pour empêcher une assimilation récursive du module comme une Promise.
+
+La détection utilise une copie dont le grand côté ne dépasse pas **1 000 px** :
+
+1. conversion en niveaux de gris, mesure de luminosité et flou gaussien ;
+2. deux passages Canny (`45/135` et `28/92`) puis fermeture morphologique ;
+3. extraction des contours externes, avec un maximum de 420 contours inspectés pour protéger la mémoire mobile ;
+4. approximation polygonale (`epsilon = 2,2 %` du périmètre) et conservation des quadrilatères convexes ;
+5. secours par seuillage adaptatif lorsque les contours Canny sont insuffisants.
+
+Le score final est une fonction TypeScript pure qui combine aire, angles proches de 90°, centrage, proximité des bords et proportions plausibles. Un résultat fort est accepté à partir de `0,66`, un résultat moyen à partir de `0,42`, et les cas faibles reviennent au cadre de secours. Ce cadre laisse une marge normalisée de 5,5 % autour de l’image.
+
+Les quatre coins sont toujours conservés sous forme de coordonnées normalisées `[0, 1]`. Des fonctions pures assurent les conversions entre image source, image de détection et aperçu, l’ordre haut-gauche / haut-droit / bas-droit / bas-gauche, la rotation par pas de 90°, la convexité, les croisements et la surface minimale. L’automatisme ne remplace jamais l’utilisateur : les quatre poignées tactiles de 44 px restent disponibles, avec polygone, assombrissement extérieur, loupe, zoom 100/150/200 %, rotations et réglage accessible au clavier.
+
+Le redressement calcule la taille de sortie depuis les longueurs opposées, avec un grand côté plafonné à **2 600 px** et 6,5 mégapixels. OpenCV applique `getPerspectiveTransform`, `warpPerspective`, puis l’un des trois modes :
+
+- `Original` : couleur corrigée ;
+- `Niveaux de gris` : conversion monochrome ;
+- `Contraste renforcé` : niveaux de gris puis égalisation d’histogramme.
+
+Un aperçu avant/après est présenté avant l’OCR. Toute rotation ou toute modification des coins invalide l’ancien résultat OCR. En cas de chargement impossible, de page indétectable, de géométrie invalide ou d’échec du redressement, la photo non redressée reste utilisable et la saisie manuelle reste accessible.
+
+Le service worker ne précache pas les quelque 11 Mo d’OpenCV. Il met en cache à la demande le worker et la ressource versionnée après leur première utilisation. Ainsi, un premier scan nécessite le réseau si ce cache n’existe pas ; les scans suivants peuvent réutiliser OpenCV hors ligne. Une mise à jour de version ou d’empreinte impose un nouveau chemin versionné ou un nouveau nom de cache.
+
 ## Pipeline d’image OCR
 
 La photo reste temporaire et côté client :
@@ -114,12 +144,13 @@ La photo reste temporaire et côté client :
 1. validation du fichier et de sa taille, limitée à 20 Mo ;
 2. décodage réel avec `createImageBitmap` orienté selon les métadonnées, puis secours `HTMLImageElement` ;
 3. refus des dimensions nulles, trop petites (moins de 320 px sur un côté) ou supérieures à 60 mégapixels ;
-4. rotation par pas de 90 degrés dans Canvas ;
-5. redimensionnement proportionnel sans agrandissement, avec un grand côté limité à **2 400 px** ;
-6. mode `Original` en couleur ou mode `Contraste amélioré` combinant niveaux de gris, contraste modéré et léger éclaircissement ;
-7. export temporaire JPEG de qualité 0,90, utilisé à la fois pour l’aperçu et l’OCR.
+4. affichage immédiat du cadre manuel de secours, pendant que la détection automatique travaille sur une copie réduite ;
+5. réglage des quatre coins et, si demandé, redressement en perspective dans le worker OpenCV ;
+6. choix entre la page redressée et l’original, puis mode `Original`, `Niveaux de gris` ou `Contraste renforcé` ;
+7. redimensionnement proportionnel sans agrandissement, avec un grand côté OCR limité à **2 400 px** ;
+8. export temporaire JPEG de qualité 0,90, utilisé à la fois pour l’aperçu et l’OCR.
 
-Cette limite offre des caractères suffisamment détaillés tout en évitant de traiter une photo iPhone pleine résolution dans le moteur. Le code ne conserve qu’une référence au fichier choisi et un Blob préparé à la fois. Les `ImageBitmap`, canvases, anciens Blobs et Object URLs sont fermés, réduits, remplacés ou révoqués dès qu’ils ne sont plus utiles.
+Ces limites offrent des caractères suffisamment détaillés tout en évitant de traiter simultanément plusieurs photos iPhone pleine résolution. Le code ne conserve qu’une référence au fichier choisi et les Blobs temporaires nécessaires à l’étape courante. Les `ImageBitmap`, canvases, anciens Blobs, buffers transférés et Object URLs sont fermés, réduits, remplacés ou révoqués dès qu’ils ne sont plus utiles. OpenCV et Tesseract travaillent successivement, jamais en parallèle dans le parcours normal.
 
 HEIC/HEIF fonctionne uniquement lorsque Safari peut le décoder nativement. Aucune bibliothèque lourde de conversion n’est ajoutée ; un échec propose de reprendre la photo ou d’utiliser un JPEG.
 
@@ -139,6 +170,8 @@ L’appel `worker.recognize` active explicitement les sorties `text` et `blocks`
 Sur la photo, chaque mot est superposé en pourcentage des dimensions de l’image OCR. L’image et la couche partagent le même conteneur et le même facteur de zoom (100 %, 150 % ou 200 %), ce qui maintient l’alignement lors du redimensionnement. Les Pointer Events gèrent doigt, souris et stylet sans placer chaque mot dans l’ordre de tabulation.
 
 La sélection est une plage `startOrder` / `endOrder`. Elle accepte le glissement avec capture du pointeur, `pointercancel`, la sélection en sens inverse, ou deux touchers successifs sur le premier et le dernier mot. Les événements de mouvement ne changent React que lorsque le mot réellement survolé change. Les actions permettent d’effacer, de tout sélectionner, de recommencer ou d’utiliser le passage.
+
+Trois modes sont proposés : `Mots`, `Lignes` et `Texte`. En mode lignes, un premier puis un second toucher sélectionnent l’intervalle de lignes correspondant ; la recherche de la ligne la plus proche tolère un léger décalage autour des boîtes OCR. Changer de mode conserve les corrections textuelles déjà effectuées.
 
 La reconstruction trie les mots par ordre de lecture, conserve un saut de ligne entre lignes et deux entre paragraphes ou blocs. Elle retire l’espace avant les ponctuations fermantes et rattache correctement apostrophes et traits d’union, sans modifier les données OCR originales.
 
@@ -160,6 +193,9 @@ Ne pas conserver les photos protège la confidentialité des pages complètes, r
 - les champs utilisent une taille de texte de 16 px pour éviter le zoom automatique de Safari ;
 - le sélecteur de couverture utilise `accept="image/*"` sans forcer `capture`, afin de laisser Safari proposer photothèque ou appareil photo ;
 - le traitement d’image privilégie `createImageBitmap` et utilise un secours `HTMLImageElement` ;
+- les poignées du recadrage utilisent Pointer Events, capture du pointeur, `requestAnimationFrame`, `pointercancel` et une cible minimale de 44 px ;
+- la loupe et les zooms permettent un réglage fin sans exiger une précision parfaite du doigt ;
+- les calculs OpenCV sont limités, séquentiels et isolés dans un worker unique ;
 - les safe areas, cibles tactiles et la barre de navigation existante sont conservées ;
 - les erreurs de quota, d’indisponibilité du stockage et de décodage d’image sont traduites en messages compréhensibles.
 
@@ -173,8 +209,10 @@ Les UUID locaux seront aussi les identifiants distants. `updatedAt` permettra pl
 
 ## Limites actuelles
 
-Il n’y a ni correction automatique de perspective, ni détection des quatre coins, ni recadrage avancé, ni scan multipage, ni import PDF, ni détection automatique de langue. Une page incurvée ou photographiée avec un fort angle peut produire des boîtes imprécises ; la sélection textuelle sert alors de secours. Une future étape pourra ajouter recadrage et correction de perspective sans changer le modèle `OcrResult` ni le formulaire de note.
+La détection et le redressement corrigent une page globalement plane ; ils ne déforment pas localement une page incurvée près de la reliure. Un fort reflet, un faible contraste, une page partiellement masquée ou un fond de couleur proche peut exiger de replacer les coins manuellement. Une perspective extrême peut rester imparfaite. La photo originale, la sélection par lignes et la sélection textuelle éditable servent toujours de secours.
+
+Il n’y a ni scan multipage, ni import PDF, ni détection automatique de langue.
 
 Il n’y a toujours ni authentification ni synchronisation distante. Les suppressions sont donc définitives sur l’appareil et les confirmations l’indiquent explicitement.
 
-Le service worker continue de gérer uniquement le shell, les routes visitées et les ressources statiques. Les données IndexedDB ne sont ni mises en cache par le service worker ni synchronisées à distance.
+Le service worker gère le shell, les routes visitées, les ressources statiques et les ressources techniques OpenCV/OCR téléchargées à la demande. Les données métier IndexedDB et les photos de page ne sont ni mises en cache par le service worker ni synchronisées à distance.

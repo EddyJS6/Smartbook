@@ -9,6 +9,13 @@
 - Effectuer la suppression d’un livre, de ses notes et de leurs images dans une seule transaction afin de ne jamais laisser de donnée orpheline.
 - Faire alimenter au futur scanner le même brouillon et le même repository que la saisie manuelle, sans dupliquer le formulaire ni le modèle.
 - Tout OCR doit rester côté client et aucune image de page ne doit être envoyée à un serveur.
+- La détection automatique des bords reste une proposition : elle ne remplace jamais le réglage manuel des quatre coins.
+- Conserver les coordonnées de recadrage normalisées et indépendantes de la taille d’affichage, de détection ou d’OCR.
+- Libérer explicitement chaque `cv.Mat` et toute autre ressource OpenCV native dès la fin de son usage.
+- Charger OpenCV uniquement dans le parcours scanner, à la demande et dans son worker dédié.
+- Un échec de chargement, de détection ou de redressement OpenCV ne doit jamais empêcher la saisie ou l’enregistrement d’une note.
+- Ne jamais transmettre ni persister l’image complète d’une page sans action volontaire future et explicite de l’utilisateur.
+- Ne pas promettre un redressement parfait des pages incurvées : toujours conserver la correction manuelle et la sélection textuelle de secours.
 - Charger côté client, et uniquement au moment du besoin, les bibliothèques qui utilisent les API du navigateur.
 - Toute modification du moteur OCR doit préserver la sélection textuelle accessible de secours.
 - Prioriser la stabilité, la mémoire et les performances de Safari sur iPhone pour tout traitement OCR.

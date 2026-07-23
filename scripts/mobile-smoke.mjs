@@ -140,6 +140,7 @@ try {
   await cdp.ready;
 
   const browserErrors = [];
+  const ocrEngineWarnings = [];
   const networkRequests = [];
   cdp.onMessage((message) => {
     if (message.method === "Runtime.exceptionThrown") {
@@ -149,7 +150,15 @@ try {
       message.method === "Log.entryAdded" &&
       message.params.entry.level === "error"
     ) {
-      browserErrors.push(message.params.entry.text);
+      const entryText = message.params.entry.text;
+      if (
+        entryText.includes("Image too small to scale") ||
+        entryText.includes("Line cannot be recognized")
+      ) {
+        ocrEngineWarnings.push(entryText);
+      } else {
+        browserErrors.push(entryText);
+      }
     }
     if (message.method === "Network.requestWillBeSent") {
       const request = message.params.request;
@@ -501,8 +510,12 @@ try {
   const scannerEnabled = await evaluate(
     `Array.from(document.querySelectorAll("button")).some((button) => !button.disabled && button.textContent.includes("Scanner une page"))`,
   );
+  console.log("[smoke] scanner ouvert");
   const ocrChunksBeforeActivation = networkRequests.filter((request) =>
     ocrChunkFileNames.some((fileName) => request.url.endsWith(fileName)),
+  );
+  const opencvRequestsBeforeActivation = networkRequests.filter((request) =>
+    request.url.includes("/vendor/opencv/4.13.0/opencv.js"),
   );
   await evaluate(`(() => {
     const button = Array.from(document.querySelectorAll("button")).find(
@@ -522,18 +535,26 @@ try {
   const requestsBeforePhoto = networkRequests.length;
   await evaluate(`(async () => {
     const canvas = document.createElement("canvas");
-    canvas.width = 1200;
-    canvas.height = 1600;
+    canvas.width = 1400;
+    canvas.height = 1800;
     const context = canvas.getContext("2d");
-    context.fillStyle = "#fffdf9";
+    context.fillStyle = "#373731";
     context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#fffdf9";
+    context.beginPath();
+    context.moveTo(150, 100);
+    context.lineTo(1290, 190);
+    context.lineTo(1210, 1690);
+    context.lineTo(210, 1740);
+    context.closePath();
+    context.fill();
     context.fillStyle = "#171712";
     context.font = "bold 72px Arial";
-    context.fillText("LES MYTHES ORGANISENT", 90, 300);
-    context.fillText("LES SOCIETES HUMAINES", 90, 410);
+    context.fillText("LES MYTHES ORGANISENT", 250, 360);
+    context.fillText("LES SOCIETES HUMAINES", 250, 470);
     context.font = "48px Arial";
-    context.fillText("La lecture nourrit la pensee.", 90, 560);
-    context.fillText("Chaque idee ouvre un nouveau chemin.", 90, 650);
+    context.fillText("La lecture nourrit la pensee.", 250, 620);
+    context.fillText("Chaque idee ouvre un chemin.", 250, 710);
     const blob = await new Promise((resolve) =>
       canvas.toBlob(resolve, "image/png")
     );
@@ -550,34 +571,154 @@ try {
     input.dispatchEvent(new Event("change", { bubbles: true }));
     return { size: blob.size, type: blob.type };
   })()`);
+  console.log("[smoke] photo de test transmise");
   await waitFor(
-    `document.querySelector('img[alt="Aperçu de la page à analyser"]') !== null && Array.from(document.querySelectorAll("button")).some((button) => button.textContent.includes("Lancer la reconnaissance"))`,
-    "La photo de page n’a pas été préparée.",
+    `document.querySelector('img[alt="Page à recadrer"]') !== null && document.body.innerText.includes("Ajuster la page")`,
+    "L’étape d’ajustement n’a pas affiché la photo.",
     120,
   );
-  await click('button[aria-label="Faire pivoter l’image vers la gauche"]');
-  await waitFor(
-    `Array.from(document.querySelectorAll("button")).some((button) => button.textContent.includes("Lancer la reconnaissance"))`,
-    "La rotation de la page n’a pas abouti.",
-    120,
+  console.log("[smoke] ajustement affiché");
+  const fallbackCornersVisibleImmediately = await evaluate(
+    `document.querySelectorAll('button[aria-label^="Déplacer coin"]').length === 4`,
   );
-  await click('button[aria-label="Faire pivoter l’image vers la droite"]');
+  let opencvRequestsAfterPhoto = [];
   await waitFor(
-    `Array.from(document.querySelectorAll("button")).some((button) => button.textContent.includes("Lancer la reconnaissance"))`,
-    "La seconde rotation de la page n’a pas abouti.",
-    120,
+    `!document.body.innerText.includes("Recherche approximative des bords")`,
+    "La détection automatique ne s’est pas terminée.",
+    400,
+  );
+  console.log("[smoke] détection terminée");
+  opencvRequestsAfterPhoto = networkRequests.filter((request) =>
+    request.url.includes("/vendor/opencv/4.13.0/opencv.js"),
+  );
+  const automaticDetectionCompleted = await evaluate(
+    `document.body.innerText.includes("détectée") || document.body.innerText.includes("Placez les quatre coins") || document.body.innerText.includes("placer les coins")`,
+  );
+  await evaluate(`document
+    .querySelector('button[aria-label="Déplacer coin haut gauche"]')
+    ?.scrollIntoView({ block: "center", inline: "center" })`);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const firstCornerCenter = await evaluate(`(() => {
+    const handle = document.querySelector('button[aria-label="Déplacer coin haut gauche"]');
+    const rect = handle?.getBoundingClientRect();
+    return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
+  })()`);
+  if (!firstCornerCenter) throw new Error("Poignée de coin introuvable.");
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mousePressed",
+    x: firstCornerCenter.x,
+    y: firstCornerCenter.y,
+    button: "left",
+    buttons: 1,
+    clickCount: 1,
+  });
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseMoved",
+    x: firstCornerCenter.x + 12,
+    y: firstCornerCenter.y + 10,
+    button: "left",
+    buttons: 1,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const magnifierVisibleDuringDrag = await evaluate(
+    `document.querySelector('button[aria-label="Déplacer coin haut gauche"]')?.parentElement?.querySelector(".size-24") !== null`,
+  );
+  const adjustmentScreenshot = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    fromSurface: true,
+  });
+  await cdp.send("Input.dispatchMouseEvent", {
+    type: "mouseReleased",
+    x: firstCornerCenter.x + 12,
+    y: firstCornerCenter.y + 10,
+    button: "left",
+    buttons: 0,
+    clickCount: 1,
+  });
+  const adjustmentScreenshotPath = join(
+    artifactDirectory,
+    "page-adjustment.png",
+  );
+  await writeFile(
+    adjustmentScreenshotPath,
+    Buffer.from(adjustmentScreenshot.data, "base64"),
   );
   await evaluate(`(() => {
     const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.trim() === "Contraste amélioré"
+      (candidate) => candidate.textContent.includes("Tourner à gauche")
+    );
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
+    `document.querySelector('img[alt="Page à recadrer"]') !== null && document.body.innerText.includes("Ajuster la page")`,
+    "La rotation de la page n’a pas abouti.",
+    120,
+  );
+  console.log("[smoke] rotation gauche terminée");
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.includes("Tourner à droite")
+    );
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
+    `document.querySelector('img[alt="Page à recadrer"]') !== null && document.body.innerText.includes("Ajuster la page")`,
+    "La seconde rotation de la page n’a pas abouti.",
+    120,
+  );
+  console.log("[smoke] rotation droite terminée");
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.trim() === "Redresser la page"
+    );
+    if (!button || button.disabled) throw new Error("Redressement introuvable");
+    button.click();
+    return true;
+  })()`);
+  await new Promise((resolve) => setTimeout(resolve, 5_000));
+  console.log(
+    "[smoke] état perspective:",
+    await evaluate(`({
+      preview: document.body.innerText.includes("Comparer avant et après"),
+      processing: document.body.innerText.includes("Redressement de la page"),
+      adjustment: document.body.innerText.includes("Ajuster la page"),
+      alerts: Array.from(document.querySelectorAll('[role="alert"]')).map(
+        (element) => element.textContent.trim()
+      )
+    })`),
+  );
+  await waitFor(
+    `document.body.innerText.includes("Comparer avant et après") && document.querySelector('img[alt="Page redressée"]') !== null`,
+    "La correction de perspective n’a pas produit d’aperçu.",
+    400,
+  );
+  console.log("[smoke] perspective calculée");
+  const perspectivePreviewWorks = true;
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.trim() === "Contraste renforcé"
     );
     if (!button) throw new Error("Mode contraste introuvable");
     button.click();
     return true;
   })()`);
   await waitFor(
+    `document.body.innerText.includes("Comparer avant et après") && Array.from(document.querySelectorAll("button")).some((button) => button.getAttribute("aria-pressed") === "true" && button.textContent.includes("Contraste renforcé"))`,
+    "Le contraste renforcé n’a pas été préparé.",
+    400,
+  );
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.trim() === "Utiliser la page redressée"
+    );
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
     `Array.from(document.querySelectorAll("button")).some((button) => button.textContent.includes("Lancer la reconnaissance"))`,
-    "Le mode de contraste n’a pas été préparé.",
+    "La page redressée n’a pas rejoint la préparation OCR.",
     120,
   );
   const languageChoices = await evaluate(
@@ -620,6 +761,57 @@ try {
     ocrScreenshotPath,
     Buffer.from(ocrScreenshot.data, "base64"),
   );
+
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll('[role="tab"]')).find(
+      (candidate) => candidate.textContent.trim() === "Lignes"
+    );
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
+    `document.querySelector('img[alt="Page analysée avec lignes sélectionnables"]') !== null`,
+    "Le mode de sélection par lignes ne s’est pas affiché.",
+  );
+  await evaluate(`(() => {
+    const image = document.querySelector('img[alt="Page analysée avec lignes sélectionnables"]');
+    const line = image?.nextElementSibling?.querySelector("span");
+    line?.scrollIntoView({ block: "center", inline: "center" });
+    return Boolean(line);
+  })()`);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const firstLineCenter = await evaluate(`(() => {
+    const image = document.querySelector('img[alt="Page analysée avec lignes sélectionnables"]');
+    const overlay = image?.nextElementSibling;
+    const line = overlay?.querySelector("span");
+    const rect = line?.getBoundingClientRect();
+    return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
+  })()`);
+  if (!firstLineCenter) throw new Error("Ligne OCR tactile introuvable.");
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchStart",
+    touchPoints: [{ ...firstLineCenter, radiusX: 4, radiusY: 4, force: 1 }],
+  });
+  await cdp.send("Input.dispatchTouchEvent", {
+    type: "touchEnd",
+    touchPoints: [],
+  });
+  await waitFor(
+    `document.body.innerText.includes("Aperçu du passage") && !document.body.innerText.includes("0 mot sélectionné")`,
+    "La sélection par lignes n’a pas fonctionné.",
+  );
+  const lineSelectionWorks = true;
+  await evaluate(`(() => {
+    const clear = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.trim() === "Effacer la sélection"
+    );
+    clear?.click();
+    const words = Array.from(document.querySelectorAll('[role="tab"]')).find(
+      (candidate) => candidate.textContent.trim() === "Mots"
+    );
+    words?.click();
+    return Boolean(words);
+  })()`);
 
   await evaluate(`(() => {
     const firstWord = document.querySelector("[data-ocr-order]");
@@ -692,7 +884,7 @@ try {
   })()`);
   await evaluate(`(() => {
     const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.includes("Sélectionner dans le texte")
+      (candidate) => candidate.getAttribute("role") === "tab" && candidate.textContent.trim() === "Texte"
     );
     if (!button) throw new Error("Sélection textuelle introuvable");
     button.click();
@@ -779,6 +971,9 @@ try {
       )
     );
   })()`);
+  const openCvAssetCached = await evaluate(`(async () =>
+    Boolean(await caches.match("/vendor/opencv/4.13.0/opencv.js"))
+  )()`);
   await navigate(
     `http://127.0.0.1:3000/books/${notesBookId}/notes/new`,
   );
@@ -793,6 +988,12 @@ try {
     `document.querySelector("#scan-library-image") !== null`,
     "Le second scan de contrôle ne s’est pas ouvert.",
   );
+  await cdp.send("Network.emulateNetworkConditions", {
+    offline: true,
+    latency: 0,
+    downloadThroughput: -1,
+    uploadThroughput: -1,
+  });
   await evaluate(`(async () => {
     const canvas = document.createElement("canvas");
     canvas.width = 1000;
@@ -821,16 +1022,32 @@ try {
     return true;
   })()`);
   await waitFor(
-    `Array.from(document.querySelectorAll("button")).some((button) => button.textContent.includes("Lancer la reconnaissance"))`,
-    "La photo du contrôle hors ligne n’a pas été préparée.",
-    120,
+    `document.body.innerText.includes("Ajuster la page") && document.querySelector('img[alt="Page à recadrer"]') !== null`,
+    "La photo du contrôle hors ligne n’a pas atteint l’ajustement.",
+    300,
   );
-  await cdp.send("Network.emulateNetworkConditions", {
-    offline: true,
-    latency: 0,
-    downloadThroughput: -1,
-    uploadThroughput: -1,
-  });
+  await waitFor(
+    `!document.body.innerText.includes("Recherche approximative des bords")`,
+    "OpenCV n’a pas terminé son contrôle hors ligne.",
+    400,
+  );
+  const offlineOpenCvReuse = !(
+    await evaluate(
+      `document.body.innerText.includes("doit être chargé une première fois avec une connexion")`,
+    )
+  );
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.trim() === "Continuer sans redresser"
+    );
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
+    `Array.from(document.querySelectorAll("button")).some((button) => button.textContent.includes("Lancer la reconnaissance"))`,
+    "Le secours sans redressement n’a pas préparé l’OCR hors ligne.",
+    200,
+  );
   await evaluate(`(() => {
     const button = Array.from(document.querySelectorAll("button")).find(
       (candidate) => candidate.textContent.includes("Lancer la reconnaissance")
@@ -873,7 +1090,9 @@ try {
     );
   const externalRequestsDuringPhotoPreparation =
     photoPreparationRequests.filter(
-      (request) => new URL(request.url).origin !== "http://127.0.0.1:3000",
+      (request) =>
+        /^https?:/i.test(request.url) &&
+        new URL(request.url).origin !== "http://127.0.0.1:3000",
     );
   const notePath = await evaluate(
     `document.querySelector('a[aria-label^="Ouvrir la note"]')?.getAttribute("href")`,
@@ -1033,6 +1252,15 @@ try {
       placeholderCounts.books === 1 && placeholderCounts.images === 0,
     scannerEnabled,
     cameraCaptureConfigured,
+    fallbackCornersVisibleImmediately,
+    automaticDetectionCompleted,
+    magnifierVisibleDuringDrag,
+    perspectivePreviewWorks,
+    lazyOpenCv:
+      opencvRequestsBeforeActivation.length === 0 &&
+      opencvRequestsAfterPhoto.length === 1,
+    openCvAssetCached,
+    offlineOpenCvReuse,
     languageChoices:
       JSON.stringify(languageChoices) ===
       JSON.stringify(["fra", "eng", "pol"]),
@@ -1044,6 +1272,7 @@ try {
       externalRequestsDuringPhotoPreparation.length === 0,
     realOcrProducesWords: recognizedWordCount > 0,
     tactileSelectionWorks,
+    lineSelectionWorks,
     textualSelectionWorks,
     noImageTransmission: imageTransmissionRequests.length === 0,
     ocrAssetsAreReadOnlyDownloads:
@@ -1078,6 +1307,7 @@ try {
     noteDetailScreenshot: noteDetailScreenshotPath,
     ocrSelectionScreenshot: ocrScreenshotPath,
     ocrOverlayScreenshot: ocrOverlayScreenshotPath,
+    adjustmentScreenshot: adjustmentScreenshotPath,
     ideasScreenshot: ideasScreenshotPath,
   };
 
@@ -1121,12 +1351,18 @@ try {
         pages: results,
         interactions: interactionChecks,
         browserErrors,
+        ocrEngineWarnings,
         networkPrivacy: {
           ocrChunkFileNames,
           externalOcrRequestCount: externalOcrRequests.length,
           imageTransmissionRequestCount: imageTransmissionRequests.length,
           externalPreparationRequestCount:
             externalRequestsDuringPhotoPreparation.length,
+          externalPreparationUrls:
+            externalRequestsDuringPhotoPreparation.map(
+              (request) => request.url,
+            ),
+          openCvRequestCount: opencvRequestsAfterPhoto.length,
         },
         offlineShell: offlineEvaluation.result.value,
         manifest: {

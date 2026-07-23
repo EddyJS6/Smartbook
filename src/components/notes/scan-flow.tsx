@@ -1,6 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import {
+  fallbackPageCorners,
+  rotatePageCorners,
+} from "@/domain/document-geometry";
+import type {
+  PageCorners,
+  PageDetectionResult,
+  PerspectiveResult,
+  PhotographWarning,
+} from "@/domain/document-types";
 import type {
   OcrImageMode,
   OcrLanguage,
@@ -13,15 +23,24 @@ import { normalizeMultilineText } from "@/domain/note-validation";
 import { useTemporaryObjectUrl } from "@/hooks/use-temporary-object-url";
 import {
   OcrImageError,
+  normalizeRightAngle,
   prepareOcrImage,
   type PreparedOcrImage,
 } from "@/lib/ocr-image-processing";
+import {
+  detectPage,
+  DocumentProcessingError,
+  rectifyPage,
+} from "@/services/document-processing-service";
+import { OpenCvLoadError } from "@/services/opencv-loader";
+import { terminateOpenCvWorker } from "@/services/opencv-worker-client";
 import {
   BrowserOcrSession,
   OcrServiceError,
   isOcrLanguagePrepared,
 } from "@/services/ocr-service";
 import { OcrWordSelector } from "@/components/notes/ocr-word-selector";
+import { PageCornerEditor } from "@/components/notes/page-corner-editor";
 import { Icon } from "@/components/ui/icon";
 import { StatusMessage } from "@/components/ui/status-message";
 
@@ -34,14 +53,37 @@ const languageLabels = Object.fromEntries(
   OCR_LANGUAGES.map((language) => [language.code, language.label]),
 ) as Record<OcrLanguage, string>;
 
+const IMAGE_MODES: { value: OcrImageMode; label: string }[] = [
+  { value: "original", label: "Couleur originale" },
+  { value: "grayscale", label: "Niveaux de gris" },
+  { value: "enhanced", label: "Contraste renforcé" },
+];
+
 function reportScanError(error: unknown): string {
   if (process.env.NODE_ENV === "development") {
-    console.error("Échec du parcours OCR", error);
+    console.error("Échec du parcours scanner", error);
   }
-  if (error instanceof OcrImageError || error instanceof OcrServiceError) {
+  if (
+    error instanceof OcrImageError ||
+    error instanceof OcrServiceError ||
+    error instanceof DocumentProcessingError ||
+    error instanceof OpenCvLoadError
+  ) {
     return error.message;
   }
   return "Une erreur inattendue a interrompu le scan. Votre photo est conservée : vous pouvez réessayer.";
+}
+
+function perspectiveToPrepared(
+  result: PerspectiveResult,
+): PreparedOcrImage {
+  return {
+    blob: result.blob,
+    width: result.width,
+    height: result.height,
+    rotation: 0,
+    mode: result.mode,
+  };
 }
 
 export function ScanFlow({
@@ -49,8 +91,18 @@ export function ScanFlow({
   onExitToManual,
 }: ScanFlowProps) {
   const [stage, setStage] = useState<ScanStage>("idle");
+  const [sourceImage, setSourceImage] = useState<PreparedOcrImage | null>(null);
   const [preparedImage, setPreparedImage] =
     useState<PreparedOcrImage | null>(null);
+  const [perspective, setPerspective] = useState<PerspectiveResult | null>(null);
+  const [corners, setCorners] = useState<PageCorners>(fallbackPageCorners());
+  const [detection, setDetection] = useState<PageDetectionResult | null>(null);
+  const [photographWarnings, setPhotographWarnings] = useState<
+    PhotographWarning[]
+  >([]);
+  const [isDetecting, setIsDetecting] = useState(false);
+  const [wasAutomaticallyDetected, setWasAutomaticallyDetected] =
+    useState(false);
   const [rotation, setRotation] = useState(0);
   const [imageMode, setImageMode] = useState<OcrImageMode>("original");
   const [language, setLanguage] = useState<OcrLanguage>("fra");
@@ -65,7 +117,10 @@ export function ScanFlow({
   const sessionRef = useRef<BrowserOcrSession | null>(null);
   const mountedRef = useRef(true);
   const preparationIdRef = useRef(0);
+  const detectionIdRef = useRef(0);
   const recognitionIdRef = useRef(0);
+  const documentAbortRef = useRef<AbortController | null>(null);
+  const sourceUrl = useTemporaryObjectUrl(sourceImage?.blob ?? null);
   const previewUrl = useTemporaryObjectUrl(preparedImage?.blob ?? null);
 
   useEffect(() => {
@@ -83,8 +138,12 @@ export function ScanFlow({
     return () => {
       mountedRef.current = false;
       preparationIdRef.current += 1;
+      detectionIdRef.current += 1;
       recognitionIdRef.current += 1;
+      documentAbortRef.current?.abort();
+      documentAbortRef.current = null;
       fileRef.current = null;
+      terminateOpenCvWorker();
       void sessionRef.current?.terminate();
       sessionRef.current = null;
     };
@@ -108,46 +167,121 @@ export function ScanFlow({
     return sessionRef.current;
   };
 
-  const prepareSelectedImage = async (
+  const invalidateRecognition = () => {
+    recognitionIdRef.current += 1;
+    setResult(null);
+    setReviewText("");
+    setReviewError(null);
+    setSettingsChanged(false);
+  };
+
+  const runAutomaticDetection = async (
+    image = sourceImage,
+  ): Promise<void> => {
+    if (!image) return;
+    documentAbortRef.current?.abort();
+    const controller = new AbortController();
+    documentAbortRef.current = controller;
+    const detectionId = ++detectionIdRef.current;
+    setIsDetecting(true);
+    setError(null);
+
+    try {
+      const nextDetection = await detectPage(image.blob, controller.signal);
+      if (
+        !mountedRef.current ||
+        detectionId !== detectionIdRef.current ||
+        controller.signal.aborted
+      ) {
+        return;
+      }
+      setDetection(nextDetection);
+      setPhotographWarnings(nextDetection.photographWarnings);
+      if (nextDetection.corners) {
+        setCorners(nextDetection.corners);
+        setWasAutomaticallyDetected(true);
+      } else {
+        setWasAutomaticallyDetected(false);
+      }
+    } catch (failure) {
+      if (
+        !mountedRef.current ||
+        detectionId !== detectionIdRef.current ||
+        (failure instanceof DocumentProcessingError &&
+          failure.code === "cancelled")
+      ) {
+        return;
+      }
+      setDetection({
+        status: "notDetected",
+        processingWidth: image.width,
+        processingHeight: image.height,
+        warning:
+          "La détection automatique n’est pas disponible. Placez les quatre coins manuellement.",
+        photographWarnings: [],
+      });
+      setError(reportScanError(failure));
+      setWasAutomaticallyDetected(false);
+    } finally {
+      if (
+        mountedRef.current &&
+        detectionId === detectionIdRef.current
+      ) {
+        setIsDetecting(false);
+        documentAbortRef.current = null;
+      }
+    }
+  };
+
+  const prepareSource = async (
     nextRotation: number,
-    nextMode: OcrImageMode,
-  ): Promise<PreparedOcrImage | null> => {
+    nextCorners: PageCorners,
+    detectAfterwards: boolean,
+  ): Promise<void> => {
     const file = fileRef.current;
     if (!file) {
       setError("Aucune image n’a été choisie.");
-      setStage("error");
-      return null;
+      setStage("idle");
+      return;
     }
 
     const preparationId = ++preparationIdRef.current;
+    documentAbortRef.current?.abort();
+    detectionIdRef.current += 1;
+    setIsDetecting(false);
     setStage("preparingImage");
     setError(null);
 
     try {
-      const prepared = await prepareOcrImage(file, nextRotation, nextMode);
+      const prepared = await prepareOcrImage(file, nextRotation, "original");
       if (
         !mountedRef.current ||
         preparationId !== preparationIdRef.current
       ) {
-        return null;
+        return;
       }
-      setPreparedImage(prepared);
+      setSourceImage(prepared);
+      setPreparedImage(null);
+      setPerspective(null);
       setRotation(prepared.rotation);
-      setImageMode(prepared.mode);
-      setResult(null);
-      setSettingsChanged(false);
-      setStage("readyForOcr");
-      return prepared;
+      setCorners(nextCorners);
+      setDetection(null);
+      setPhotographWarnings([]);
+      setWasAutomaticallyDetected(false);
+      invalidateRecognition();
+      setStage("adjustingPage");
+      if (detectAfterwards) void runAutomaticDetection(prepared);
     } catch (failure) {
       if (
         !mountedRef.current ||
         preparationId !== preparationIdRef.current
       ) {
-        return null;
+        return;
       }
+      setSourceImage(null);
+      setPreparedImage(null);
       setError(reportScanError(failure));
-      setStage("error");
-      return null;
+      setStage("idle");
     }
   };
 
@@ -164,11 +298,105 @@ export function ScanFlow({
     }
 
     fileRef.current = file;
-    setPreparedImage(null);
-    setResult(null);
-    setReviewText("");
+    setImageMode("original");
     setRotation(0);
-    await prepareSelectedImage(0, imageMode);
+    await prepareSource(0, fallbackPageCorners(), true);
+  };
+
+  const rotateSource = async (direction: "left" | "right") => {
+    const delta = direction === "right" ? 90 : -90;
+    const nextRotation = normalizeRightAngle(rotation + delta);
+    const nextCorners = rotatePageCorners(corners, delta);
+    await prepareSource(nextRotation, nextCorners, true);
+  };
+
+  const performRectification = async (
+    mode = imageMode,
+  ): Promise<PreparedOcrImage | null> => {
+    if (!sourceImage) return null;
+    documentAbortRef.current?.abort();
+    const controller = new AbortController();
+    documentAbortRef.current = controller;
+    setStage("rectifyingPage");
+    setError(null);
+
+    try {
+      const nextPerspective = await rectifyPage(sourceImage.blob, corners, {
+        mode,
+        wasAutomaticallyDetected,
+        signal: controller.signal,
+      });
+      if (!mountedRef.current || controller.signal.aborted) return null;
+      const prepared = perspectiveToPrepared(nextPerspective);
+      setPerspective(nextPerspective);
+      setPreparedImage(prepared);
+      setImageMode(mode);
+      invalidateRecognition();
+      setStage("pagePreview");
+      return prepared;
+    } catch (failure) {
+      if (
+        !mountedRef.current ||
+        (failure instanceof DocumentProcessingError &&
+          failure.code === "cancelled")
+      ) {
+        return null;
+      }
+      setError(reportScanError(failure));
+      setStage("adjustingPage");
+      return null;
+    } finally {
+      if (documentAbortRef.current === controller) {
+        documentAbortRef.current = null;
+      }
+    }
+  };
+
+  const prepareWithoutRectification = async (
+    mode = imageMode,
+  ): Promise<PreparedOcrImage | null> => {
+    if (!sourceImage) return null;
+    const preparationId = ++preparationIdRef.current;
+    setStage("preparingImage");
+    setError(null);
+    try {
+      const file = new File([sourceImage.blob], "page-brainbook.jpg", {
+        type: sourceImage.blob.type || "image/jpeg",
+      });
+      const prepared =
+        mode === "original"
+          ? { ...sourceImage, mode: "original" as const }
+          : await prepareOcrImage(file, 0, mode);
+      if (
+        !mountedRef.current ||
+        preparationId !== preparationIdRef.current
+      ) {
+        return null;
+      }
+      setPerspective(null);
+      setPreparedImage(prepared);
+      setImageMode(mode);
+      invalidateRecognition();
+      setStage("readyForOcr");
+      return prepared;
+    } catch (failure) {
+      if (
+        !mountedRef.current ||
+        preparationId !== preparationIdRef.current
+      ) {
+        return null;
+      }
+      setError(reportScanError(failure));
+      setStage("adjustingPage");
+      return null;
+    }
+  };
+
+  const prepareActiveMode = async (
+    mode: OcrImageMode,
+  ): Promise<PreparedOcrImage | null> => {
+    if (perspective) return performRectification(mode);
+    return prepareWithoutRectification(mode);
   };
 
   const runRecognition = async (
@@ -176,7 +404,6 @@ export function ScanFlow({
   ): Promise<void> => {
     if (!image) {
       setError("Préparez une image avant de lancer la reconnaissance.");
-      setStage("error");
       return;
     }
 
@@ -203,7 +430,7 @@ export function ScanFlow({
       }
       if (!nextResult.fullText.trim()) {
         setError("Aucun texte n’a pu être détecté sur cette image.");
-        setStage("error");
+        setStage("readyForOcr");
         return;
       }
 
@@ -225,15 +452,19 @@ export function ScanFlow({
         return;
       }
       setError(reportScanError(failure));
-      setStage("error");
+      setStage("readyForOcr");
     }
   };
 
-  const cancelRecognition = async () => {
+  const cancelProcessing = async () => {
+    documentAbortRef.current?.abort();
+    documentAbortRef.current = null;
     recognitionIdRef.current += 1;
     setProgress(null);
     await sessionRef.current?.cancel();
-    if (mountedRef.current) setStage("readyForOcr");
+    if (!mountedRef.current) return;
+    if (stage === "rectifyingPage") setStage("adjustingPage");
+    else setStage(preparedImage ? "readyForOcr" : "adjustingPage");
   };
 
   const restartFromSelection = () => {
@@ -245,7 +476,7 @@ export function ScanFlow({
   };
 
   const reanalyzeWithSettings = async () => {
-    const prepared = await prepareSelectedImage(rotation, imageMode);
+    const prepared = await prepareActiveMode(imageMode);
     if (prepared) await runRecognition(prepared);
   };
 
@@ -266,23 +497,33 @@ export function ScanFlow({
 
   const resetPhoto = () => {
     preparationIdRef.current += 1;
+    detectionIdRef.current += 1;
     recognitionIdRef.current += 1;
+    documentAbortRef.current?.abort();
+    documentAbortRef.current = null;
     fileRef.current = null;
+    setSourceImage(null);
     setPreparedImage(null);
+    setPerspective(null);
+    setCorners(fallbackPageCorners());
+    setDetection(null);
+    setPhotographWarnings([]);
+    setIsDetecting(false);
     setResult(null);
     setReviewText("");
     setError(null);
     setProgress(null);
     setSettingsChanged(false);
+    setRotation(0);
+    setImageMode("original");
     setStage("idle");
     void sessionRef.current?.terminate();
     sessionRef.current = null;
+    terminateOpenCvWorker();
   };
 
-  const isProcessing =
-    stage === "preparingImage" ||
-    stage === "loadingOcrEngine" ||
-    stage === "recognizing";
+  const isOcrProcessing =
+    stage === "loadingOcrEngine" || stage === "recognizing";
 
   return (
     <section className="mt-6 space-y-5" aria-label="Scanner une page">
@@ -292,20 +533,25 @@ export function ScanFlow({
             <Icon name="shield" size={19} />
           </span>
           <p className="text-xs leading-5 text-[var(--muted)]">
-            La reconnaissance est effectuée sur cet appareil. La photo de la
-            page n’est pas envoyée à un serveur.
+            La reconnaissance est effectuée sur cet appareil, tout comme la
+            détection et le redressement. La photo de la page n’est pas envoyée
+            à un serveur.
           </p>
         </div>
       </div>
 
-      {stage === "idle" || (stage === "error" && !preparedImage) ? (
+      {stage === "idle" ? (
         <div className="space-y-5">
           <div className="rounded-3xl border border-[var(--line)] bg-[var(--card)] p-5">
             <h2 className="font-semibold">Photographiez une seule page</h2>
             <ul className="mt-3 space-y-1.5 text-sm leading-5 text-[var(--muted)]">
-              <li>• Gardez le téléphone parallèle à la page.</li>
-              <li>• Utilisez une lumière suffisante et évitez les ombres.</li>
-              <li>• Ne coupez pas les lignes de texte.</li>
+              <li>• Aplatissez doucement la page sans masquer le texte.</li>
+              <li>• Gardez le téléphone parallèle et les quatre bords visibles.</li>
+              <li>• Évitez les ombres et rapprochez-vous pour garder le texte net.</li>
+              <li>
+                • Près de la reliure, réduisez la courbure : une forte courbure
+                ne peut pas être entièrement corrigée.
+              </li>
             </ul>
           </div>
 
@@ -343,156 +589,231 @@ export function ScanFlow({
         </div>
       ) : null}
 
-      {error ? <StatusMessage tone="error">{error}</StatusMessage> : null}
+      {error && stage !== "adjustingPage" ? (
+        <StatusMessage tone="error">{error}</StatusMessage>
+      ) : null}
 
-      {preparedImage && previewUrl && stage !== "selection" && stage !== "review" ? (
-        <div className="space-y-5">
-          <div className="overflow-hidden rounded-3xl bg-[#292925] p-2">
-            {/* Aperçu issu exclusivement de l’URL Blob locale. */}
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={previewUrl}
-              alt="Aperçu de la page à analyser"
-              className="max-h-[58dvh] w-full rounded-2xl object-contain"
-            />
-          </div>
-
-          {!isProcessing ? (
-            <>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  aria-label="Faire pivoter l’image vers la gauche"
-                  onClick={() =>
-                    void prepareSelectedImage(rotation - 90, imageMode)
-                  }
-                  className="flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-[var(--line)] bg-white px-3 text-sm font-semibold"
-                >
-                  <Icon name="rotate-left" size={19} />
-                  Gauche
-                </button>
-                <button
-                  type="button"
-                  aria-label="Faire pivoter l’image vers la droite"
-                  onClick={() =>
-                    void prepareSelectedImage(rotation + 90, imageMode)
-                  }
-                  className="flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-[var(--line)] bg-white px-3 text-sm font-semibold"
-                >
-                  Droite
-                  <Icon name="rotate-right" size={19} />
-                </button>
-              </div>
-
-              <fieldset>
-                <legend className="text-sm font-semibold">
-                  Traitement de l’image
-                </legend>
-                <div className="mt-2 grid grid-cols-2 gap-2">
-                  {[
-                    { value: "original" as const, label: "Original" },
-                    {
-                      value: "enhanced" as const,
-                      label: "Contraste amélioré",
-                    },
-                  ].map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      aria-pressed={imageMode === option.value}
-                      onClick={() =>
-                        void prepareSelectedImage(rotation, option.value)
-                      }
-                      className={`min-h-12 rounded-2xl px-3 text-xs font-semibold ${
-                        imageMode === option.value
-                          ? "bg-[var(--moss)] text-white"
-                          : "border border-[var(--line)] bg-white text-[var(--muted)]"
-                      }`}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </fieldset>
-
-              <div>
-                <label
-                  htmlFor="ocr-language"
-                  className="mb-2 block text-sm font-semibold"
-                >
-                  Langue principale de la page
-                </label>
-                <select
-                  id="ocr-language"
-                  value={language}
-                  onChange={(event) =>
-                    setLanguage(event.target.value as OcrLanguage)
-                  }
-                  className="min-h-13 w-full rounded-2xl border border-[var(--line)] bg-white px-4 text-base"
-                >
-                  {OCR_LANGUAGES.map((option) => (
-                    <option key={option.code} value={option.code}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <p className="mt-2 text-xs leading-5 text-[var(--muted)]">
-                  Choisissez la langue principale de la page pour améliorer la
-                  reconnaissance.
-                </p>
-              </div>
-
-              {!languagePrepared ? (
-                <p className="rounded-2xl bg-[var(--paper-deep)] p-4 text-xs leading-5 text-[var(--muted)]">
-                  La première analyse dans cette langue peut prendre un peu plus
-                  de temps, car le moteur de reconnaissance doit être préparé.
-                </p>
-              ) : null}
-
-              <button
-                type="button"
-                onClick={() => void runRecognition()}
-                className="min-h-13 w-full rounded-2xl bg-[var(--moss)] px-5 py-3 text-sm font-semibold text-white"
-              >
-                Lancer la reconnaissance
-              </button>
-
-              <div className="grid grid-cols-2 gap-2">
-                <label
-                  htmlFor="scan-replace-image"
-                  className="flex min-h-11 cursor-pointer items-center justify-center rounded-xl px-3 text-center text-xs font-semibold text-[var(--moss)]"
-                >
-                  Choisir une autre image
-                </label>
-                <input
-                  id="scan-replace-image"
-                  type="file"
-                  accept="image/*"
-                  onChange={(event) => void handleFileSelection(event)}
-                  className="sr-only"
-                />
-                <button
-                  type="button"
-                  onClick={resetPhoto}
-                  className="min-h-11 rounded-xl px-3 text-xs font-semibold text-[var(--clay)]"
-                >
-                  Reprendre une photo
-                </button>
-              </div>
-            </>
-          ) : null}
+      {stage === "preparingImage" ? (
+        <div
+          aria-live="polite"
+          className="rounded-3xl border border-[var(--line)] bg-[var(--card)] p-5"
+        >
+          <p className="font-semibold">Préparation locale de l’image…</p>
         </div>
       ) : null}
 
-      {isProcessing ? (
+      {stage === "adjustingPage" && sourceImage && sourceUrl ? (
+        <PageCornerEditor
+          imageUrl={sourceUrl}
+          imageWidth={sourceImage.width}
+          imageHeight={sourceImage.height}
+          corners={corners}
+          detection={detection}
+          isDetecting={isDetecting}
+          error={error}
+          warnings={photographWarnings}
+          onCornersChange={(nextCorners) => {
+            setCorners(nextCorners);
+            setWasAutomaticallyDetected(false);
+            setPerspective(null);
+            setPreparedImage(null);
+            invalidateRecognition();
+          }}
+          onAutomaticDetection={() => void runAutomaticDetection()}
+          onRotate={(direction) => void rotateSource(direction)}
+          onRetake={resetPhoto}
+          onRectify={() => void performRectification()}
+          onContinueWithoutRectifying={() =>
+            void prepareWithoutRectification()
+          }
+        />
+      ) : null}
+
+      {stage === "rectifyingPage" ? (
+        <div
+          aria-live="polite"
+          className="rounded-3xl border border-[var(--line)] bg-[var(--card)] p-5"
+        >
+          <p className="font-semibold">Redressement de la page…</p>
+          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+            Recadrage, correction de perspective et préparation de l’image.
+          </p>
+          <button
+            type="button"
+            onClick={() => void cancelProcessing()}
+            className="mt-4 min-h-11 w-full rounded-xl border border-[var(--line)] px-4 text-sm font-semibold text-[var(--clay)]"
+          >
+            Annuler
+          </button>
+        </div>
+      ) : null}
+
+      {stage === "pagePreview" &&
+      sourceImage &&
+      sourceUrl &&
+      preparedImage &&
+      previewUrl ? (
+        <section aria-labelledby="page-preview-title" className="space-y-4">
+          <div>
+            <p className="text-[0.68rem] font-bold tracking-[0.12em] text-[var(--clay)] uppercase">
+              Vérification
+            </p>
+            <h2 id="page-preview-title" className="mt-1 text-xl font-semibold">
+              Comparer avant et après
+            </h2>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <figure className="min-w-0">
+              <div className="flex aspect-[3/4] items-center overflow-hidden rounded-2xl bg-[#292925] p-1">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={sourceUrl}
+                  alt="Photo originale"
+                  className="max-h-full w-full object-contain"
+                />
+              </div>
+              <figcaption className="mt-2 text-center text-xs text-[var(--muted)]">
+                Avant
+              </figcaption>
+            </figure>
+            <figure className="min-w-0">
+              <div className="flex aspect-[3/4] items-center overflow-hidden rounded-2xl bg-[#292925] p-1">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={previewUrl}
+                  alt="Page redressée"
+                  className="max-h-full w-full object-contain"
+                />
+              </div>
+              <figcaption className="mt-2 text-center text-xs text-[var(--muted)]">
+                Après
+              </figcaption>
+            </figure>
+          </div>
+
+          <fieldset>
+            <legend className="text-sm font-semibold">
+              Préparation pour l’OCR
+            </legend>
+            <div className="mt-2 grid gap-2">
+              {IMAGE_MODES.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  aria-pressed={imageMode === option.value}
+                  onClick={() => void performRectification(option.value)}
+                  className={`min-h-11 rounded-xl px-3 text-xs font-semibold ${
+                    imageMode === option.value
+                      ? "bg-[var(--moss)] text-white"
+                      : "border border-[var(--line)] bg-white text-[var(--muted)]"
+                  }`}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </fieldset>
+
+          <button
+            type="button"
+            onClick={() => setStage("readyForOcr")}
+            className="min-h-13 w-full rounded-2xl bg-[var(--moss)] px-5 py-3 text-sm font-semibold text-white"
+          >
+            Utiliser la page redressée
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setPreparedImage(null);
+              setPerspective(null);
+              invalidateRecognition();
+              setStage("adjustingPage");
+            }}
+            className="min-h-11 w-full text-sm font-semibold text-[var(--moss)]"
+          >
+            Modifier les quatre coins
+          </button>
+          <button
+            type="button"
+            onClick={() => void prepareWithoutRectification()}
+            className="min-h-11 w-full text-sm font-semibold text-[var(--muted)]"
+          >
+            Continuer sans redresser
+          </button>
+        </section>
+      ) : null}
+
+      {stage === "readyForOcr" && preparedImage && previewUrl ? (
+        <section className="space-y-5">
+          <div className="overflow-hidden rounded-3xl bg-[#292925] p-2">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={previewUrl}
+              alt="Page prête à analyser"
+              className="max-h-[58dvh] w-full rounded-2xl object-contain"
+            />
+          </div>
+          <div>
+            <label
+              htmlFor="ocr-language"
+              className="mb-2 block text-sm font-semibold"
+            >
+              Langue principale de la page
+            </label>
+            <select
+              id="ocr-language"
+              value={language}
+              onChange={(event) =>
+                setLanguage(event.target.value as OcrLanguage)
+              }
+              className="min-h-13 w-full rounded-2xl border border-[var(--line)] bg-white px-4 text-base"
+            >
+              {OCR_LANGUAGES.map((option) => (
+                <option key={option.code} value={option.code}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          {!languagePrepared ? (
+            <p className="rounded-2xl bg-[var(--paper-deep)] p-4 text-xs leading-5 text-[var(--muted)]">
+              La première analyse dans cette langue peut prendre plus de temps,
+              car son modèle doit être préparé.
+            </p>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void runRecognition()}
+            className="min-h-13 w-full rounded-2xl bg-[var(--moss)] px-5 py-3 text-sm font-semibold text-white"
+          >
+            Lancer la reconnaissance
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              setStage(perspective ? "pagePreview" : "adjustingPage")
+            }
+            className="min-h-11 w-full text-sm font-semibold text-[var(--moss)]"
+          >
+            Revenir à la préparation
+          </button>
+          <button
+            type="button"
+            onClick={resetPhoto}
+            className="min-h-11 w-full text-sm font-semibold text-[var(--clay)]"
+          >
+            Reprendre la photo
+          </button>
+        </section>
+      ) : null}
+
+      {isOcrProcessing ? (
         <div
           aria-live="polite"
           className="rounded-3xl border border-[var(--line)] bg-[var(--card)] p-5"
         >
           <p className="font-semibold">
-            {stage === "preparingImage"
-              ? "Préparation de l’image"
-              : progress?.label ?? "Préparation du moteur"}
+            {progress?.label ?? "Préparation du moteur"}
           </p>
           {progress?.progress !== null && progress?.progress !== undefined ? (
             <>
@@ -514,15 +835,13 @@ export function ScanFlow({
               </p>
             </>
           ) : null}
-          {stage !== "preparingImage" ? (
-            <button
-              type="button"
-              onClick={() => void cancelRecognition()}
-              className="mt-4 min-h-11 w-full rounded-xl border border-[var(--line)] px-4 text-sm font-semibold text-[var(--clay)]"
-            >
-              Annuler
-            </button>
-          ) : null}
+          <button
+            type="button"
+            onClick={() => void cancelProcessing()}
+            className="mt-4 min-h-11 w-full rounded-xl border border-[var(--line)] px-4 text-sm font-semibold text-[var(--clay)]"
+          >
+            Annuler
+          </button>
         </div>
       ) : null}
 
@@ -549,18 +868,24 @@ export function ScanFlow({
                 ))}
               </select>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                setImageMode((current) =>
-                  current === "original" ? "enhanced" : "original",
-                );
+            <label className="sr-only" htmlFor="ocr-result-image-mode">
+              Préparation de l’image
+            </label>
+            <select
+              id="ocr-result-image-mode"
+              value={imageMode}
+              onChange={(event) => {
+                setImageMode(event.target.value as OcrImageMode);
                 setSettingsChanged(true);
               }}
               className="min-h-11 rounded-xl border border-[var(--line)] bg-white px-3 text-xs font-semibold"
             >
-              {imageMode === "original" ? "Original" : "Contraste amélioré"}
-            </button>
+              {IMAGE_MODES.map((mode) => (
+                <option key={mode.value} value={mode.value}>
+                  {mode.label}
+                </option>
+              ))}
+            </select>
           </div>
           {settingsChanged ? (
             <div className="rounded-2xl bg-[var(--paper-deep)] p-4">
@@ -636,7 +961,7 @@ export function ScanFlow({
         </section>
       ) : null}
 
-      {!isProcessing ? (
+      {!isOcrProcessing && stage !== "preparingImage" && stage !== "rectifyingPage" ? (
         <button
           type="button"
           onClick={onExitToManual}

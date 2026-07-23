@@ -120,10 +120,11 @@ export function calculateOcrDimensions(
   };
 }
 
-function enhanceContrast(
+function preparePixels(
   context: CanvasRenderingContext2D,
   width: number,
   height: number,
+  mode: Exclude<OcrImageMode, "original">,
 ): void {
   let imageData: ImageData;
   try {
@@ -137,8 +138,8 @@ function enhanceContrast(
   }
 
   const pixels = imageData.data;
-  const contrast = 1.22;
-  const brightness = 8;
+  const contrast = mode === "enhanced" ? 1.32 : 1;
+  const brightness = mode === "enhanced" ? 10 : 0;
 
   for (let index = 0; index < pixels.length; index += 4) {
     const grey =
@@ -258,8 +259,8 @@ export async function prepareOcrImage(
     context.drawImage(source, 0, 0, drawWidth, drawHeight);
     context.restore();
 
-    if (mode === "enhanced") {
-      enhanceContrast(context, width, height);
+    if (mode !== "original") {
+      preparePixels(context, width, height, mode);
     }
 
     const blob = await canvasToBlob(canvas);

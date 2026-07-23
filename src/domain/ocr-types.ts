@@ -6,7 +6,7 @@ export const OCR_LANGUAGES = [
 
 export type OcrLanguage = (typeof OCR_LANGUAGES)[number]["code"];
 
-export type OcrImageMode = "original" | "enhanced";
+export type OcrImageMode = "original" | "grayscale" | "enhanced";
 
 export interface OcrBoundingBox {
   x0: number;
@@ -57,6 +57,9 @@ export interface OcrSelectionRange {
 export type ScanStage =
   | "idle"
   | "preparingImage"
+  | "adjustingPage"
+  | "rectifyingPage"
+  | "pagePreview"
   | "readyForOcr"
   | "loadingOcrEngine"
   | "recognizing"

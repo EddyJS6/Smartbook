@@ -1,4 +1,4 @@
-const CACHE_NAME = "brainbook-shell-v1";
+const CACHE_NAME = "brainbook-shell-v2";
 const OCR_METADATA_CACHE = "brainbook-ocr-metadata-v1";
 const OFFLINE_URL = "/offline";
 const APP_SHELL = ["/", "/offline", "/manifest.webmanifest"];
@@ -54,7 +54,9 @@ self.addEventListener("fetch", (event) => {
   if (
     url.pathname.startsWith("/_next/static/") ||
     url.pathname.startsWith("/icons/") ||
-    url.pathname.startsWith("/covers/")
+    url.pathname.startsWith("/covers/") ||
+    url.pathname.startsWith("/workers/") ||
+    url.pathname.startsWith("/vendor/opencv/")
   ) {
     event.respondWith(
       caches.match(request).then(

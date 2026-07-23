@@ -1,6 +1,7 @@
 import type {
   OcrBoundingBox,
   OcrResult,
+  OcrLine,
   OcrSelectionRange,
   OcrWord,
 } from "@/domain/ocr-types";
@@ -146,4 +147,70 @@ export function scaleOcrBoundingBox(
     x1: box.x1 * scaleX,
     y1: box.y1 * scaleY,
   };
+}
+
+function distanceToBoxCenter(
+  point: { x: number; y: number },
+  box: OcrBoundingBox,
+  verticalWeight: number,
+): number {
+  const centerX = (box.x0 + box.x1) / 2;
+  const centerY = (box.y0 + box.y1) / 2;
+  const dx =
+    point.x < box.x0
+      ? box.x0 - point.x
+      : point.x > box.x1
+        ? point.x - box.x1
+        : Math.abs(point.x - centerX) * 0.08;
+  const dy =
+    point.y < box.y0
+      ? box.y0 - point.y
+      : point.y > box.y1
+        ? point.y - box.y1
+        : Math.abs(point.y - centerY) * 0.04;
+  return Math.hypot(dx, dy * verticalWeight);
+}
+
+export function findNearestOcrWord(
+  words: readonly OcrWord[],
+  point: { x: number; y: number },
+  maximumDistance: number,
+): OcrWord | null {
+  let nearest: OcrWord | null = null;
+  let nearestDistance = maximumDistance;
+  for (const word of words) {
+    const distance = distanceToBoxCenter(point, word.bbox, 1.35);
+    if (
+      distance < nearestDistance ||
+      (distance === nearestDistance &&
+        nearest !== null &&
+        word.order < nearest.order)
+    ) {
+      nearest = word;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
+}
+
+export function findNearestOcrLine(
+  lines: readonly OcrLine[],
+  point: { x: number; y: number },
+  maximumDistance: number,
+): OcrLine | null {
+  let nearest: OcrLine | null = null;
+  let nearestDistance = maximumDistance;
+  for (const line of lines) {
+    const distance = distanceToBoxCenter(point, line.bbox, 1.65);
+    if (
+      distance < nearestDistance ||
+      (distance === nearestDistance &&
+        nearest !== null &&
+        line.order < nearest.order)
+    ) {
+      nearest = line;
+      nearestDistance = distance;
+    }
+  }
+  return nearest;
 }

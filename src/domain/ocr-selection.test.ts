@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { OcrResult, OcrWord } from "@/domain/ocr-types";
 import {
   finishSelection,
+  findNearestOcrLine,
+  findNearestOcrWord,
   normalizeSelectionRange,
   reconstructSelectedText,
   scaleOcrBoundingBox,
@@ -119,5 +121,31 @@ describe("OCR selection", () => {
         300,
       ),
     ).toEqual({ x0: 20, y0: 30, x1: 60, y1: 90 });
+  });
+
+  it("trouve de façon déterministe le mot et la ligne les plus proches", () => {
+    const candidates = [word(0, "haut"), word(1, "bas")];
+    candidates[0].bbox = { x0: 10, y0: 10, x1: 40, y1: 25 };
+    candidates[1].bbox = { x0: 10, y0: 45, x1: 40, y1: 60 };
+    expect(
+      findNearestOcrWord(candidates, { x: 30, y: 31 }, 20)?.text,
+    ).toBe("haut");
+    expect(
+      findNearestOcrWord(candidates, { x: 90, y: 90 }, 10),
+    ).toBeNull();
+
+    const lines = candidates.map((candidate, index) => ({
+      id: `l${index}`,
+      words: [candidate],
+      text: candidate.text,
+      bbox: candidate.bbox,
+      blockIndex: 0,
+      paragraphIndex: 0,
+      lineIndex: index,
+      order: index,
+    }));
+    expect(
+      findNearestOcrLine(lines, { x: 30, y: 39 }, 20)?.text,
+    ).toBe("bas");
   });
 });
