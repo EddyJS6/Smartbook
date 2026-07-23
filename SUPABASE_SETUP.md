@@ -29,11 +29,13 @@ npx supabase db push --dry-run
 npx supabase db push
 ```
 
-La migration
-`supabase/migrations/20260723173000_create_brainbook_backup.sql` crée :
+Les migrations
+`supabase/migrations/20260723173000_create_brainbook_backup.sql` et
+`supabase/migrations/20260723210000_create_note_reading_metadata.sql` créent :
 
 - `public.books` ;
 - `public.book_notes` ;
+- `public.note_reading_metadata` pour les favoris et l’historique de relecture ;
 - les contraintes, index et triggers ;
 - toutes les policies RLS ;
 - le bucket privé `book-covers` ;
@@ -134,6 +136,9 @@ Exécuter les blocs dans SQL Editor :
 4. l’INSERT d’une note B rattachée au livre A doit échouer ;
 5. avec `set local role anon`, SELECT doit renvoyer zéro ligne ;
 6. refaire SELECT/UPDATE avec A : ils doivent réussir.
+
+Le fichier `supabase/tests/note_reading_metadata_rls_validation.sql` complète
+la procédure pour les favoris et compteurs de lecture.
 
 Tester aussi Storage depuis deux sessions navigateur distinctes :
 

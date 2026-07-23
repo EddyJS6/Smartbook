@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { BookCover } from "@/components/books/book-cover";
 import { TagPill } from "@/components/notes/tag-pill";
@@ -10,9 +10,11 @@ import { Icon } from "@/components/ui/icon";
 import { StatusMessage } from "@/components/ui/status-message";
 import { useBook } from "@/hooks/use-book";
 import { useNote } from "@/hooks/use-note";
+import { useNoteReadingMetadata } from "@/hooks/use-note-reading-metadata";
 import { formatLongDate } from "@/lib/format-date";
 import { reportStorageError } from "@/storage/errors";
 import { noteRepository } from "@/storage/repositories/note-repository";
+import { noteReadingMetadataRepository } from "@/storage/repositories/note-reading-metadata-repository";
 
 function InvalidNoteState({ bookId }: { bookId: string }) {
   return (
@@ -52,8 +54,14 @@ export function NoteDetailClient() {
   const router = useRouter();
   const bookState = useBook(bookId);
   const noteState = useNote(noteId);
+  const readingState = useNoteReadingMetadata(
+    noteId as Parameters<typeof useNoteReadingMetadata>[0],
+  );
+  const readRecorded = useRef(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [metadataError, setMetadataError] = useState<string | null>(null);
+  const [updatingMetadata, setUpdatingMetadata] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
@@ -75,6 +83,46 @@ export function NoteDetailClient() {
       if (noticeTimer) window.clearTimeout(noticeTimer);
     };
   }, []);
+
+  useEffect(() => {
+    if (noteState.status !== "ready" || readRecorded.current) return;
+    const timer = window.setTimeout(() => {
+      if (readRecorded.current) return;
+      readRecorded.current = true;
+      void noteReadingMetadataRepository
+        .recordRead(noteState.note.id)
+        .catch((error: unknown) =>
+          setMetadataError(reportStorageError(error).message),
+        );
+    }, 1_500);
+    return () => window.clearTimeout(timer);
+  }, [noteState]);
+
+  const toggleReadingFlag = async (
+    kind: "favorite" | "important",
+    value: boolean,
+  ) => {
+    if (noteState.status !== "ready" || updatingMetadata) return;
+    setUpdatingMetadata(true);
+    setMetadataError(null);
+    try {
+      if (kind === "favorite") {
+        await noteReadingMetadataRepository.setFavorite(
+          noteState.note.id,
+          value,
+        );
+      } else {
+        await noteReadingMetadataRepository.setImportant(
+          noteState.note.id,
+          value,
+        );
+      }
+    } catch (error) {
+      setMetadataError(reportStorageError(error).message);
+    } finally {
+      setUpdatingMetadata(false);
+    }
+  };
 
   const deleteNote = async () => {
     if (noteState.status !== "ready" || isDeleting) return;
@@ -185,6 +233,13 @@ export function NoteDetailClient() {
           <StatusMessage tone="error">{deleteError}</StatusMessage>
         </div>
       ) : null}
+      {metadataError || readingState.error ? (
+        <div className="mt-5">
+          <StatusMessage tone="error">
+            {metadataError ?? readingState.error}
+          </StatusMessage>
+        </div>
+      ) : null}
 
       <section className="mt-6 flex items-center gap-4 rounded-3xl border border-[var(--line)] bg-[var(--card)] p-3">
         <BookCover
@@ -197,6 +252,50 @@ export function NoteDetailClient() {
             {book.author}
           </p>
         </div>
+      </section>
+
+      <section
+        aria-label="Repères de relecture"
+        className="mt-4 grid grid-cols-2 gap-2"
+      >
+        <button
+          type="button"
+          aria-pressed={readingState.metadata?.isFavorite ?? false}
+          disabled={!readingState.metadata || updatingMetadata}
+          onClick={() =>
+            void toggleReadingFlag(
+              "favorite",
+              !(readingState.metadata?.isFavorite ?? false),
+            )
+          }
+          className={`flex min-h-12 items-center justify-center gap-2 rounded-2xl border px-3 text-sm font-semibold disabled:opacity-50 ${
+            readingState.metadata?.isFavorite
+              ? "border-[#b89b62] bg-[#f4ead5] text-[#765921]"
+              : "border-[var(--line)] bg-[var(--card)] text-[var(--muted)]"
+          }`}
+        >
+          <Icon name="star" size={18} />
+          {readingState.metadata?.isFavorite ? "Favorite" : "Ajouter aux favoris"}
+        </button>
+        <button
+          type="button"
+          aria-pressed={readingState.metadata?.isImportant ?? false}
+          disabled={!readingState.metadata || updatingMetadata}
+          onClick={() =>
+            void toggleReadingFlag(
+              "important",
+              !(readingState.metadata?.isImportant ?? false),
+            )
+          }
+          className={`flex min-h-12 items-center justify-center gap-2 rounded-2xl border px-3 text-sm font-semibold disabled:opacity-50 ${
+            readingState.metadata?.isImportant
+              ? "border-[#ca866f] bg-[#f6e5df] text-[var(--clay)]"
+              : "border-[var(--line)] bg-[var(--card)] text-[var(--muted)]"
+          }`}
+        >
+          <Icon name="flag" size={18} />
+          {readingState.metadata?.isImportant ? "Importante" : "Marquer importante"}
+        </button>
       </section>
 
       {note.sourceType === "scan" ? (

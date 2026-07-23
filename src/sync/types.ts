@@ -1,6 +1,15 @@
-import type { Book, BookNote, UUID } from "@/domain/models";
+import type {
+  Book,
+  BookNote,
+  NoteReadingMetadata,
+  UUID,
+} from "@/domain/models";
 
-export type SyncEntityType = "book" | "bookNote" | "coverImage";
+export type SyncEntityType =
+  | "book"
+  | "bookNote"
+  | "coverImage"
+  | "noteReadingMetadata";
 export type SyncOperation = "upsert" | "delete";
 export type SyncQueueStatus = "pending" | "processing" | "failed";
 
@@ -34,9 +43,10 @@ export interface LocalSafetyBackup {
   id: UUID;
   createdAt: string;
   reason: "restore" | "merge" | "account_change";
-  schemaVersion: 1;
+  schemaVersion: 1 | 2;
   books: Book[];
   notes: BookNote[];
+  noteReadingMetadata?: NoteReadingMetadata[];
   coverImageIds: UUID[];
 }
 
@@ -62,6 +72,20 @@ export type RemoteNoteRow = {
   page_number: string | null;
   tags: unknown;
   source_type: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+  server_updated_at: string;
+};
+
+export type RemoteNoteReadingMetadataRow = {
+  note_id: string;
+  user_id: string;
+  is_favorite: boolean;
+  is_important: boolean;
+  last_read_at: string | null;
+  read_count: number;
+  last_suggested_at: string | null;
   created_at: string;
   updated_at: string;
   deleted_at: string | null;

@@ -193,6 +193,7 @@ export class BookRepository {
         this.database.books,
         this.database.images,
         this.database.bookNotes,
+        this.database.noteReadingMetadata,
         this.database.syncQueue,
         async () => {
           const book = await this.database.books.get(id as UUID);
@@ -209,6 +210,13 @@ export class BookRepository {
             await enqueueSyncOperation(
               this.database,
               "bookNote",
+              note.id,
+              "delete",
+              book.id,
+            );
+            await enqueueSyncOperation(
+              this.database,
+              "noteReadingMetadata",
               note.id,
               "delete",
               book.id,
@@ -231,6 +239,9 @@ export class BookRepository {
           );
 
           await this.database.bookNotes.bulkDelete(
+            notes.map((note) => note.id),
+          );
+          await this.database.noteReadingMetadata.bulkDelete(
             notes.map((note) => note.id),
           );
           await this.database.books.delete(book.id);

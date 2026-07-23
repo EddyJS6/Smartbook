@@ -1,23 +1,94 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { NoteCard } from "@/components/notes/note-card";
 import { Icon } from "@/components/ui/icon";
 import { StatusMessage } from "@/components/ui/status-message";
-import { collectIdeaTags, filterIdeas } from "@/domain/note-search";
+import {
+  chooseRediscovery,
+  collectIdeaTags,
+  filterIdeas,
+  sortIdeas,
+  type IdeaFilter,
+  type IdeaSort,
+} from "@/domain/note-search";
 import { useIdeas } from "@/hooks/use-ideas";
+import { noteReadingMetadataRepository } from "@/storage/repositories/note-reading-metadata-repository";
+
+const filters: ReadonlyArray<{ value: IdeaFilter; label: string }> = [
+  { value: "all", label: "Toutes" },
+  { value: "favorites", label: "Favorites" },
+  { value: "important", label: "Importantes" },
+  { value: "recent", label: "Récentes" },
+  { value: "rarelyRead", label: "Peu relues" },
+  { value: "neverRead", label: "Jamais relues" },
+];
+
+function buildReadingHref(
+  query: string,
+  tag: string | null,
+  filter: IdeaFilter,
+  sort: IdeaSort,
+  randomSeed: string,
+) {
+  const parameters = new URLSearchParams({ context: "ideas", filter, sort });
+  if (query.trim()) parameters.set("query", query.trim());
+  if (tag) parameters.set("tag", tag);
+  if (sort === "random") parameters.set("seed", randomSeed);
+  return `/reading?${parameters.toString()}`;
+}
 
 export function IdeasClient() {
   const { status, entries, error, reload } = useIdeas();
   const [query, setQuery] = useState("");
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
+  const [filter, setFilter] = useState<IdeaFilter>("all");
+  const [sort, setSort] = useState<IdeaSort>("updated");
+  const [randomSeed, setRandomSeed] = useState("session");
+  const [rediscoveryId, setRediscoveryId] = useState<string | null>(null);
+  const suggestedThisSession = useRef(new Set<string>());
   const tags = useMemo(() => collectIdeaTags(entries), [entries]);
   const filteredEntries = useMemo(
-    () => filterIdeas(entries, query, selectedTag),
-    [entries, query, selectedTag],
+    () =>
+      sortIdeas(
+        filterIdeas(entries, query, selectedTag, filter),
+        sort,
+        randomSeed,
+      ),
+    [entries, filter, query, randomSeed, selectedTag, sort],
   );
+  const rediscovery = useMemo(() => {
+    const selected = entries.find(({ note }) => note.id === rediscoveryId);
+    if (selected) return selected;
+    if (status !== "ready" || entries.length === 0) return null;
+    const date = new Date().toISOString().slice(0, 10);
+    return chooseRediscovery(entries, date);
+  }, [entries, rediscoveryId, status]);
   const noteCount = entries.length;
+
+  useEffect(() => {
+    if (!rediscovery || suggestedThisSession.current.has(rediscovery.note.id)) {
+      return;
+    }
+    const stableId = rediscovery.note.id;
+    queueMicrotask(() =>
+      setRediscoveryId((currentId) => currentId ?? stableId),
+    );
+    suggestedThisSession.current.add(rediscovery.note.id);
+    void noteReadingMetadataRepository
+      .recordSuggested(rediscovery.note.id)
+      .catch(() => undefined);
+  }, [rediscovery]);
+
+  const showAnotherIdea = () => {
+    const next = chooseRediscovery(
+      entries,
+      crypto.randomUUID(),
+      rediscovery?.note.id,
+    );
+    if (next) setRediscoveryId(next.note.id);
+  };
 
   return (
     <div className="page-content">
@@ -33,10 +104,41 @@ export function IdeasClient() {
             ? "Rassemblement de vos idées…"
             : `${noteCount} ${noteCount > 1 ? "notes conservées" : "note conservée"}`}
         </p>
-        <p className="mt-4 max-w-sm text-sm leading-6 text-[var(--muted)]">
-          Toutes les idées que vous avez conservées au fil de vos lectures.
-        </p>
       </header>
+
+      {status === "ready" && rediscovery ? (
+        <section className="mt-7 rounded-[1.8rem] bg-[var(--moss)] p-5 text-white shadow-[0_10px_28px_rgb(49_95_77_/_0.16)]">
+          <div className="flex items-center gap-2 text-xs font-bold tracking-[0.1em] text-white/75 uppercase">
+            <Icon name="spark" size={17} />
+            Une idée à redécouvrir
+          </div>
+          <p className="mt-4 line-clamp-4 whitespace-pre-line font-serif text-lg leading-7">
+            {rediscovery.note.extractedText ||
+              rediscovery.note.personalReflection}
+          </p>
+          <p className="mt-3 truncate text-xs text-white/70">
+            {rediscovery.book.title} · {rediscovery.book.author}
+          </p>
+          <div className="mt-5 grid grid-cols-[1fr_auto] gap-2">
+            <Link
+              href={`/reading?context=rediscovery&noteId=${rediscovery.note.id}`}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl bg-white px-4 text-sm font-semibold text-[var(--moss)]"
+            >
+              <Icon name="reader" size={18} />
+              Relire
+            </Link>
+            <button
+              type="button"
+              onClick={showAnotherIdea}
+              disabled={entries.length < 2}
+              aria-label="Afficher une autre idée"
+              className="flex size-11 items-center justify-center rounded-2xl border border-white/25 text-white disabled:opacity-40"
+            >
+              <Icon name="shuffle" size={18} />
+            </button>
+          </div>
+        </section>
+      ) : null}
 
       {status === "ready" && noteCount > 0 ? (
         <>
@@ -51,48 +153,95 @@ export function IdeasClient() {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder="Rechercher une idée, un livre, un tag…"
-                className="min-h-13 w-full rounded-2xl border border-[var(--line)] bg-[var(--card)] py-3 pr-4 pl-12 text-base shadow-[0_2px_12px_rgb(48_39_30_/_0.035)] placeholder:text-[#969187]"
+                className="min-h-13 w-full rounded-2xl border border-[var(--line)] bg-[var(--card)] py-3 pr-4 pl-12 text-base"
               />
             </label>
           </section>
 
+          <section aria-label="Filtrer les idées" className="mt-4 flex flex-wrap gap-2">
+            {filters.map((item) => (
+              <button
+                key={item.value}
+                type="button"
+                aria-pressed={filter === item.value}
+                onClick={() => setFilter(item.value)}
+                className={`min-h-10 rounded-full px-4 text-xs font-semibold ${
+                  filter === item.value
+                    ? "bg-[var(--moss)] text-white"
+                    : "border border-[var(--line)] bg-[var(--card)] text-[var(--muted)]"
+                }`}
+              >
+                {item.label}
+              </button>
+            ))}
+          </section>
+
           {tags.length > 0 ? (
-            <section aria-label="Filtrer par tag" className="mt-4">
-              <div className="-mx-5 flex gap-2 overflow-x-auto px-5 pb-2">
-                <button
-                  type="button"
-                  aria-pressed={selectedTag === null}
-                  onClick={() => setSelectedTag(null)}
-                  className={`min-h-10 shrink-0 rounded-full px-4 text-xs font-semibold ${
-                    selectedTag === null
-                      ? "bg-[var(--moss)] text-white"
-                      : "border border-[var(--line)] bg-[var(--card)] text-[var(--muted)]"
-                  }`}
-                >
-                  Toutes
-                </button>
-                {tags.map((tag) => {
-                  const selected =
-                    selectedTag?.toLocaleLowerCase("fr") ===
-                    tag.toLocaleLowerCase("fr");
-                  return (
-                    <button
-                      key={tag.toLocaleLowerCase("fr")}
-                      type="button"
-                      aria-pressed={selected}
-                      onClick={() => setSelectedTag(selected ? null : tag)}
-                      className={`min-h-10 max-w-48 shrink-0 truncate rounded-full px-4 text-xs font-semibold ${
-                        selected
-                          ? "bg-[var(--moss)] text-white"
-                          : "border border-[var(--line)] bg-[var(--card)] text-[var(--muted)]"
-                      }`}
-                    >
-                      {tag}
-                    </button>
-                  );
-                })}
-              </div>
+            <section aria-label="Filtrer par tag" className="mt-3 flex flex-wrap gap-2">
+              {tags.map((tag) => {
+                const selected =
+                  selectedTag?.toLocaleLowerCase("fr") ===
+                  tag.toLocaleLowerCase("fr");
+                return (
+                  <button
+                    key={tag.toLocaleLowerCase("fr")}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setSelectedTag(selected ? null : tag)}
+                    className={`min-h-9 max-w-full truncate rounded-full px-3 text-xs font-semibold ${
+                      selected
+                        ? "bg-[var(--clay)] text-white"
+                        : "bg-[var(--paper-deep)] text-[var(--muted)]"
+                    }`}
+                  >
+                    #{tag}
+                  </button>
+                );
+              })}
             </section>
+          ) : null}
+
+          <div className="mt-5 flex items-center justify-between gap-3">
+            <p className="text-xs font-semibold text-[var(--muted)]">
+              {filteredEntries.length} résultat
+              {filteredEntries.length > 1 ? "s" : ""}
+            </p>
+            <label className="flex items-center gap-2 text-xs font-semibold text-[var(--muted)]">
+              Trier
+              <select
+                value={sort}
+                onChange={(event) => {
+                  const nextSort = event.target.value as IdeaSort;
+                  setSort(nextSort);
+                  if (nextSort === "random") {
+                    setRandomSeed(crypto.randomUUID());
+                  }
+                }}
+                className="min-h-10 rounded-xl border border-[var(--line)] bg-[var(--card)] px-3 text-sm text-[var(--ink)]"
+              >
+                <option value="updated">Dernière modification</option>
+                <option value="created">Date de création</option>
+                <option value="bookTitle">Titre du livre</option>
+                <option value="rarelyRead">Les moins relues</option>
+                <option value="random">Ordre aléatoire</option>
+              </select>
+            </label>
+          </div>
+
+          {filteredEntries.length > 0 ? (
+            <Link
+              href={buildReadingHref(
+                query,
+                selectedTag,
+                filter,
+                sort,
+                randomSeed,
+              )}
+              className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-[var(--moss)] px-5 text-sm font-semibold text-[var(--moss)]"
+            >
+              <Icon name="reader" size={19} />
+              Commencer une lecture
+            </Link>
           ) : null}
         </>
       ) : null}
@@ -124,28 +273,21 @@ export function IdeasClient() {
 
         {status === "ready" && noteCount === 0 ? (
           <div className="rounded-[2rem] border border-dashed border-[#d6cdbf] bg-[var(--card)] px-6 py-10 text-center">
-            <span className="mx-auto flex size-14 items-center justify-center rounded-full bg-[var(--moss-soft)] text-[var(--moss)]">
-              <Icon name="spark" size={25} />
-            </span>
-            <h2 className="mt-5 text-lg font-semibold">
-              Vos idées apparaîtront ici
-            </h2>
-            <p className="mx-auto mt-2 max-w-xs text-sm leading-6 text-[var(--muted)]">
-              Ajoutez des passages ou des réflexions depuis vos livres pour les
-              retrouver dans un même espace.
+            <Icon name="spark" size={25} />
+            <h2 className="mt-5 text-lg font-semibold">Vos idées apparaîtront ici</h2>
+            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+              Ajoutez des passages ou des réflexions depuis vos livres.
             </p>
             <Link
               href="/"
-              className="mt-6 inline-flex min-h-12 items-center justify-center rounded-2xl bg-[var(--moss)] px-5 py-3 text-sm font-semibold text-white"
+              className="mt-6 inline-flex min-h-12 items-center justify-center rounded-2xl bg-[var(--moss)] px-5 text-sm font-semibold text-white"
             >
               Retour à la bibliothèque
             </Link>
           </div>
         ) : null}
 
-        {status === "ready" &&
-        noteCount > 0 &&
-        filteredEntries.length > 0 ? (
+        {status === "ready" && filteredEntries.length > 0 ? (
           <div className="grid gap-3">
             {filteredEntries.map(({ note, book }) => (
               <NoteCard key={note.id} note={note} book={book} />
@@ -153,20 +295,19 @@ export function IdeasClient() {
           </div>
         ) : null}
 
-        {status === "ready" &&
-        noteCount > 0 &&
-        filteredEntries.length === 0 ? (
+        {status === "ready" && noteCount > 0 && filteredEntries.length === 0 ? (
           <div className="rounded-3xl border border-dashed border-[#d6cdbf] bg-[var(--card)] px-6 py-9 text-center">
             <Icon name="search" size={24} />
             <h2 className="mt-4 font-semibold">Aucune idée trouvée</h2>
             <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-              Modifiez la recherche ou retirez le filtre actif.
+              Modifiez la recherche ou retirez les filtres actifs.
             </p>
             <button
               type="button"
               onClick={() => {
                 setQuery("");
                 setSelectedTag(null);
+                setFilter("all");
               }}
               className="mt-4 min-h-11 px-4 text-sm font-semibold text-[var(--moss)]"
             >

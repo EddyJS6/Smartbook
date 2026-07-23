@@ -5,6 +5,7 @@ import type { NoteWithBook } from "@/domain/models";
 import { reportStorageError } from "@/storage/errors";
 import { bookRepository } from "@/storage/repositories/book-repository";
 import { noteRepository } from "@/storage/repositories/note-repository";
+import { noteReadingMetadataRepository } from "@/storage/repositories/note-reading-metadata-repository";
 
 type IdeasState =
   | { status: "loading"; entries: NoteWithBook[]; error: null }
@@ -12,15 +13,21 @@ type IdeasState =
   | { status: "error"; entries: NoteWithBook[]; error: string };
 
 async function loadIdeas(): Promise<NoteWithBook[]> {
-  const [notes, books] = await Promise.all([
+  const [notes, books, readingMetadata] = await Promise.all([
     noteRepository.listAll(),
     bookRepository.list(),
+    noteReadingMetadataRepository.listAll(),
   ]);
   const booksById = new Map(books.map((book) => [book.id, book]));
+  const metadataByNoteId = new Map(
+    readingMetadata.map((metadata) => [metadata.noteId, metadata]),
+  );
 
   return notes.flatMap((note) => {
     const book = booksById.get(note.bookId);
-    return book ? [{ note, book }] : [];
+    return book
+      ? [{ note, book, readingMetadata: metadataByNoteId.get(note.id) }]
+      : [];
   });
 }
 
@@ -62,8 +69,16 @@ export function useIdeas() {
         }
       });
 
+    const handleMetadata = () => {
+      void loadIdeas().then((entries) => {
+        if (active) setState({ status: "ready", entries, error: null });
+      });
+    };
+    window.addEventListener("brainbook:reading-metadata", handleMetadata);
+
     return () => {
       active = false;
+      window.removeEventListener("brainbook:reading-metadata", handleMetadata);
     };
   }, []);
 

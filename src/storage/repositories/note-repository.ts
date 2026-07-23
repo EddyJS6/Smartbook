@@ -22,6 +22,7 @@ import {
   enqueueSyncOperation,
   notifyLocalMutation,
 } from "@/sync/queue";
+import { NoteReadingMetadataRepository } from "@/storage/repositories/note-reading-metadata-repository";
 
 function normalizeInput(input: BookNoteInput): BookNoteInput {
   return {
@@ -79,6 +80,13 @@ export class NoteRepository {
         },
       );
       notifyLocalMutation();
+      try {
+        await new NoteReadingMetadataRepository(
+          this.database,
+        ).getOrCreate(created.id);
+      } catch {
+        // La note est acquise. Les métadonnées seront recréées paresseusement.
+      }
       return created;
     } catch (error) {
       throw normalizeStorageError(error);
@@ -169,6 +177,7 @@ export class NoteRepository {
         "rw",
         this.database.bookNotes,
         this.database.images,
+        this.database.noteReadingMetadata,
         this.database.syncQueue,
         async () => {
           const note = await this.database.bookNotes.get(id as UUID);
@@ -181,7 +190,15 @@ export class NoteRepository {
             "delete",
             note.bookId,
           );
+          await enqueueSyncOperation(
+            this.database,
+            "noteReadingMetadata",
+            note.id,
+            "delete",
+            note.bookId,
+          );
           await this.database.bookNotes.delete(note.id);
+          await this.database.noteReadingMetadata.delete(note.id);
           if (note.sourceImageId) {
             await this.database.images.delete(note.sourceImageId);
           }
@@ -201,6 +218,7 @@ export class NoteRepository {
         "rw",
         this.database.bookNotes,
         this.database.images,
+        this.database.noteReadingMetadata,
         this.database.syncQueue,
         async () => {
           const notes = await this.database.bookNotes
@@ -219,8 +237,18 @@ export class NoteRepository {
               "delete",
               note.bookId,
             );
+            await enqueueSyncOperation(
+              this.database,
+              "noteReadingMetadata",
+              note.id,
+              "delete",
+              note.bookId,
+            );
           }
           await this.database.bookNotes.bulkDelete(
+            notes.map((note) => note.id),
+          );
+          await this.database.noteReadingMetadata.bulkDelete(
             notes.map((note) => note.id),
           );
           if (sourceImageIds.length > 0) {

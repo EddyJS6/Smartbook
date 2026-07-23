@@ -77,6 +77,44 @@ export type Database = {
         };
         Relationships: [];
       };
+      note_reading_metadata: {
+        Row: {
+          user_id: string;
+          note_id: string;
+          is_favorite: boolean;
+          is_important: boolean;
+          last_read_at: string | null;
+          read_count: number;
+          last_suggested_at: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at: string | null;
+          server_updated_at: string;
+        };
+        Insert: {
+          user_id: string;
+          note_id: string;
+          is_favorite?: boolean;
+          is_important?: boolean;
+          last_read_at?: string | null;
+          read_count?: number;
+          last_suggested_at?: string | null;
+          created_at: string;
+          updated_at: string;
+          deleted_at?: string | null;
+          server_updated_at?: string;
+        };
+        Update: {
+          is_favorite?: boolean;
+          is_important?: boolean;
+          last_read_at?: string | null;
+          read_count?: number;
+          last_suggested_at?: string | null;
+          updated_at?: string;
+          deleted_at?: string | null;
+        };
+        Relationships: [];
+      };
     };
     Views: Record<never, never>;
     Functions: Record<never, never>;

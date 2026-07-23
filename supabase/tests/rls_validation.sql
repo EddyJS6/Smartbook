@@ -58,3 +58,9 @@ insert into public.book_notes (
 );
 
 rollback;
+
+-- Après avoir créé une note appartenant à A, vérifier aussi :
+-- A peut insérer/lire/modifier note_reading_metadata pour cette note.
+-- B ne peut ni la lire ni la modifier.
+-- B ne peut pas créer de métadonnées pour une note de A (policy + FK).
+-- Le rôle anon ne peut lire aucune ligne de note_reading_metadata.

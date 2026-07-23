@@ -36,6 +36,20 @@ export interface BookNote {
   updatedAt: string;
 }
 
+export interface NoteReadingMetadata {
+  noteId: UUID;
+  isFavorite: boolean;
+  isImportant: boolean;
+  /** IndexedDB does not index boolean keys, so these numeric mirrors back local queries. */
+  favoriteIndex: 0 | 1;
+  importantIndex: 0 | 1;
+  lastReadAt: string | null;
+  readCount: number;
+  lastSuggestedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export type BookInput = Pick<Book, "title" | "author" | "status">;
 
 export type PreparedImage = Omit<StoredImage, "id" | "createdAt">;
@@ -48,4 +62,5 @@ export type BookNoteInput = Pick<
 export type NoteWithBook = {
   note: BookNote;
   book: Book;
+  readingMetadata?: NoteReadingMetadata;
 };

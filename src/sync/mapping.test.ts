@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { Book, BookNote } from "@/domain/models";
+import type { Book, BookNote, NoteReadingMetadata } from "@/domain/models";
 import {
   bookToRemote,
   isRemoteDeletionNewer,
   noteToRemote,
+  noteReadingMetadataToRemote,
   remoteBookToLocal,
   remoteNoteToLocal,
+  remoteNoteReadingMetadataToLocal,
   remoteWinsConflict,
 } from "@/sync/mapping";
 import type { RemoteBookRow, RemoteNoteRow } from "@/sync/types";
@@ -88,6 +90,29 @@ describe("remote mapping", () => {
     expect(() => remoteNoteToLocal(row, userId, new Set())).toThrow(
       "référence un livre absent",
     );
+  });
+
+  it("convertit les repères de relecture dans les deux sens", () => {
+    const metadata: NoteReadingMetadata = {
+      noteId,
+      isFavorite: true,
+      isImportant: false,
+      favoriteIndex: 1,
+      importantIndex: 0,
+      lastReadAt: "2026-01-05T10:00:00.000Z",
+      readCount: 3,
+      lastSuggestedAt: null,
+      createdAt: note.createdAt,
+      updatedAt: "2026-01-05T10:00:00.000Z",
+    };
+    const remote = noteReadingMetadataToRemote(metadata, userId);
+    expect(
+      remoteNoteReadingMetadataToLocal(
+        { ...remote, server_updated_at: metadata.updatedAt },
+        userId,
+        new Set([noteId]),
+      ),
+    ).toEqual(metadata);
   });
 });
 

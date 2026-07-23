@@ -1,9 +1,12 @@
+"use client";
+
 import Link from "next/link";
 import type { Book, BookNote } from "@/domain/models";
 import { BookCover } from "@/components/books/book-cover";
 import { TagPill } from "@/components/notes/tag-pill";
 import { Icon } from "@/components/ui/icon";
 import { formatShortDate } from "@/lib/format-date";
+import { useNoteReadingMetadata } from "@/hooks/use-note-reading-metadata";
 
 type NoteCardProps = {
   note: BookNote;
@@ -12,6 +15,7 @@ type NoteCardProps = {
 
 export function NoteCard({ note, book }: NoteCardProps) {
   const visibleTags = note.tags.slice(0, 3);
+  const { metadata } = useNoteReadingMetadata(note.id);
 
   return (
     <Link
@@ -31,6 +35,23 @@ export function NoteCard({ note, book }: NoteCardProps) {
             </p>
             <p className="truncate text-xs text-[var(--muted)]">{book.author}</p>
           </div>
+        </div>
+      ) : null}
+
+      {metadata?.isFavorite || metadata?.isImportant ? (
+        <div className="mb-3 flex flex-wrap gap-2 text-[0.68rem] font-semibold">
+          {metadata.isFavorite ? (
+            <span className="inline-flex items-center gap-1 text-[#8a6a2e]">
+              <Icon name="star" size={14} />
+              Favorite
+            </span>
+          ) : null}
+          {metadata.isImportant ? (
+            <span className="inline-flex items-center gap-1 text-[var(--clay)]">
+              <Icon name="flag" size={14} />
+              Importante
+            </span>
+          ) : null}
         </div>
       ) : null}
 

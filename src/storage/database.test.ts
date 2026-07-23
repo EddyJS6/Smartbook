@@ -1,6 +1,6 @@
 import Dexie, { type EntityTable } from "dexie";
 import { afterEach, describe, expect, it } from "vitest";
-import type { Book, StoredImage } from "@/domain/models";
+import type { Book, BookNote, StoredImage } from "@/domain/models";
 import { BrainBookDatabase } from "@/storage/database";
 
 class LegacyBrainBookDatabase extends Dexie {
@@ -16,6 +16,23 @@ class LegacyBrainBookDatabase extends Dexie {
   }
 }
 
+class LegacyV3BrainBookDatabase extends Dexie {
+  bookNotes!: EntityTable<BookNote, "id">;
+
+  constructor(name: string) {
+    super(name);
+    this.version(3).stores({
+      books: "&id, updatedAt, title, author, status",
+      images: "&id, createdAt",
+      bookNotes: "&id, bookId, createdAt, updatedAt",
+      syncQueue:
+        "&id, [entityType+entityId], entityType, operation, status, createdAt, updatedAt",
+      syncMetadata: "&id, associatedUserId",
+      localSafetyBackups: "&id, createdAt",
+    });
+  }
+}
+
 describe("BrainBookDatabase migrations", () => {
   const databasesToDelete: string[] = [];
 
@@ -23,7 +40,7 @@ describe("BrainBookDatabase migrations", () => {
     await Promise.all(databasesToDelete.splice(0).map((name) => Dexie.delete(name)));
   });
 
-  it("conserve les livres et crée l’Outbox lors du passage de v1 à v3", async () => {
+  it("conserve les livres et crée l’Outbox lors du passage de v1 à v4", async () => {
     const name = `brainbook-migration-test-${crypto.randomUUID()}`;
     databasesToDelete.push(name);
     const legacy = new LegacyBrainBookDatabase(name);
@@ -43,7 +60,7 @@ describe("BrainBookDatabase migrations", () => {
     const migrated = new BrainBookDatabase(name);
     await migrated.open();
 
-    expect(migrated.verno).toBe(3);
+    expect(migrated.verno).toBe(4);
     expect(await migrated.books.get(existingBook.id)).toEqual(existingBook);
     expect(await migrated.bookNotes.count()).toBe(0);
     expect(await migrated.syncQueue.toArray()).toMatchObject([
@@ -61,6 +78,46 @@ describe("BrainBookDatabase migrations", () => {
       firstSyncCompleted: false,
       schemaVersion: 1,
     });
+    migrated.close();
+  });
+
+  it("initialise les métadonnées sans modifier les notes existantes", async () => {
+    const name = `brainbook-reading-migration-${crypto.randomUUID()}`;
+    databasesToDelete.push(name);
+    const legacy = new LegacyV3BrainBookDatabase(name);
+    await legacy.open();
+    const timestamp = "2026-01-01T00:00:00.000Z";
+    const note = {
+      id: "30000000-0000-4000-8000-000000000000" as const,
+      bookId: "10000000-0000-4000-8000-000000000000" as const,
+      extractedText: "Une idée existante",
+      personalReflection: "",
+      pageNumber: null,
+      tags: [],
+      sourceType: "manual" as const,
+      sourceImageId: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    await legacy.bookNotes.add(note);
+    legacy.close();
+
+    const migrated = new BrainBookDatabase(name);
+    await migrated.open();
+    expect(await migrated.bookNotes.get(note.id)).toEqual(note);
+    expect(await migrated.noteReadingMetadata.get(note.id)).toMatchObject({
+      noteId: note.id,
+      isFavorite: false,
+      isImportant: false,
+      favoriteIndex: 0,
+      importantIndex: 0,
+      lastReadAt: null,
+      readCount: 0,
+      lastSuggestedAt: null,
+    });
+    expect(
+      await migrated.syncQueue.get(`noteReadingMetadata:${note.id}`),
+    ).toMatchObject({ operation: "upsert", status: "pending" });
     migrated.close();
   });
 });

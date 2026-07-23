@@ -7,20 +7,26 @@ import { BrainBookDatabase } from "@/storage/database";
 import { BookRepository } from "@/storage/repositories/book-repository";
 import { NoteRepository } from "@/storage/repositories/note-repository";
 import { SyncService } from "@/sync/sync-service";
-import type { RemoteBookRow, RemoteNoteRow } from "@/sync/types";
+import type {
+  RemoteBookRow,
+  RemoteNoteReadingMetadataRow,
+  RemoteNoteRow,
+} from "@/sync/types";
 
 const userId = "90000000-0000-4000-8000-000000000000";
 
-type TableName = "books" | "book_notes";
+type TableName = "books" | "book_notes" | "note_reading_metadata";
 
 function createFakeSupabase(initial?: {
   books?: RemoteBookRow[];
   notes?: RemoteNoteRow[];
+  noteReadingMetadata?: RemoteNoteReadingMetadataRow[];
   writeError?: { status: number; message: string; code?: string };
 }) {
   const tables: Record<TableName, Array<Record<string, unknown>>> = {
     books: [...(initial?.books ?? [])],
     book_notes: [...(initial?.notes ?? [])],
+    note_reading_metadata: [...(initial?.noteReadingMetadata ?? [])],
   };
   const uploadedPaths: string[] = [];
 
@@ -76,7 +82,9 @@ function createFakeSupabase(initial?: {
         const index = rows.findIndex(
           (row) =>
             row.user_id === this.payload?.user_id &&
-            row.id === this.payload?.id,
+            (this.table === "note_reading_metadata"
+              ? row.note_id === this.payload?.note_id
+              : row.id === this.payload?.id),
         );
         const next = {
           ...(index >= 0 ? rows[index] : {}),
@@ -263,7 +271,7 @@ describe("SyncService integration", () => {
 
     const result = await service.backupLocalData(userId);
 
-    expect(result.pushed).toBe(3);
+    expect(result.pushed).toBe(4);
     expect(fake.tables.books).toHaveLength(1);
     expect(fake.tables.book_notes).toHaveLength(1);
     expect(fake.uploadedPaths).toEqual([
@@ -332,7 +340,10 @@ describe("SyncService integration", () => {
       sourceImageId: null,
     });
     expect(await database.localSafetyBackups.count()).toBe(1);
-    expect(await database.syncQueue.count()).toBe(0);
+    expect(await database.syncQueue.count()).toBe(1);
+    expect(await database.syncQueue.toArray()).toMatchObject([
+      { entityType: "noteReadingMetadata", operation: "upsert" },
+    ]);
   });
 
   it("refuse toute synchronisation automatique vers un autre compte", async () => {

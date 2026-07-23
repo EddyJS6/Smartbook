@@ -16,6 +16,7 @@ const navigationItems: ReadonlyArray<{
 
 export function BottomNavigation() {
   const pathname = usePathname();
+  if (pathname.startsWith("/reading")) return null;
 
   return (
     <nav

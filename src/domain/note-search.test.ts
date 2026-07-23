@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
-import type { Book, BookNote, NoteWithBook } from "@/domain/models";
-import { collectIdeaTags, filterIdeas } from "@/domain/note-search";
+import type {
+  Book,
+  BookNote,
+  NoteReadingMetadata,
+  NoteWithBook,
+} from "@/domain/models";
+import {
+  chooseRediscovery,
+  collectIdeaTags,
+  filterIdeas,
+  sortIdeas,
+} from "@/domain/note-search";
 
 const book: Book = {
   id: "10000000-0000-4000-8000-000000000000",
@@ -16,22 +26,39 @@ function entry(
   id: string,
   values: Partial<BookNote>,
   entryBook: Book = book,
+  readingMetadata?: Partial<NoteReadingMetadata>,
 ): NoteWithBook {
+  const note = {
+    id: id as BookNote["id"],
+    bookId: entryBook.id,
+    extractedText: "",
+    personalReflection: "",
+    pageNumber: null,
+    tags: [],
+    sourceType: "manual" as const,
+    sourceImageId: null,
+    createdAt: "2026-01-02T00:00:00.000Z",
+    updatedAt: "2026-01-02T00:00:00.000Z",
+    ...values,
+  };
   return {
     book: entryBook,
-    note: {
-      id: id as BookNote["id"],
-      bookId: entryBook.id,
-      extractedText: "",
-      personalReflection: "",
-      pageNumber: null,
-      tags: [],
-      sourceType: "manual",
-      sourceImageId: null,
-      createdAt: "2026-01-02T00:00:00.000Z",
-      updatedAt: "2026-01-02T00:00:00.000Z",
-      ...values,
-    },
+    note,
+    readingMetadata: readingMetadata
+      ? {
+          noteId: note.id,
+          isFavorite: false,
+          isImportant: false,
+          favoriteIndex: 0,
+          importantIndex: 0,
+          lastReadAt: null,
+          readCount: 0,
+          lastSuggestedAt: null,
+          createdAt: note.createdAt,
+          updatedAt: note.updatedAt,
+          ...readingMetadata,
+        }
+      : undefined,
   };
 }
 
@@ -87,5 +114,43 @@ describe("idea search", () => {
       "Habitudes",
       "Histoire",
     ]);
+  });
+
+  it("filtre les favoris, les notes importantes et celles jamais relues", () => {
+    const marked = [
+      entry(
+        "60000000-0000-4000-8000-000000000000",
+        {},
+        book,
+        { isFavorite: true, favoriteIndex: 1 },
+      ),
+      entry(
+        "70000000-0000-4000-8000-000000000000",
+        {},
+        book,
+        {
+          isImportant: true,
+          importantIndex: 1,
+          lastReadAt: "2026-01-04T00:00:00.000Z",
+          readCount: 2,
+        },
+      ),
+    ];
+    expect(filterIdeas(marked, "", null, "favorites")).toHaveLength(1);
+    expect(filterIdeas(marked, "", null, "important")).toHaveLength(1);
+    expect(filterIdeas(marked, "", null, "neverRead")).toHaveLength(1);
+  });
+
+  it("garde un ordre aléatoire stable pour une même session", () => {
+    expect(sortIdeas(entries, "random", "session")).toEqual(
+      sortIdeas(entries, "random", "session"),
+    );
+  });
+
+  it("évite la dernière suggestion lorsqu’une autre note existe", () => {
+    const first = chooseRediscovery(entries, "jour");
+    expect(
+      chooseRediscovery(entries, "autre", first?.note.id)?.note.id,
+    ).not.toBe(first?.note.id);
   });
 });

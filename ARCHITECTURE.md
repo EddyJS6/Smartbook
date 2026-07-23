@@ -15,7 +15,7 @@ La base s’appelle `brainbook`. Aucun livre, aucune couverture et aucune note n
 
 ## Schéma IndexedDB
 
-La version 1, déjà diffusée, déclare uniquement `books` et `images`. Elle reste inchangée dans le code. La **version 2** conserve ces deux tables et ajoute `bookNotes`. La **version 3** ajoute uniquement les structures techniques de sauvegarde `syncQueue`, `syncMetadata` et `localSafetyBackups`. Lors de la migration, les livres, notes et couvertures existants sont placés dans l’Outbox sans modifier les objets métier.
+La version 1, déjà diffusée, déclare uniquement `books` et `images`. Elle reste inchangée dans le code. La **version 2** conserve ces deux tables et ajoute `bookNotes`. La **version 3** ajoute uniquement les structures techniques de sauvegarde `syncQueue`, `syncMetadata` et `localSafetyBackups`. La **version 4** ajoute `noteReadingMetadata` sans modifier les notes existantes. Lors de chaque migration, les données historiques sont conservées et les nouvelles entités synchronisables sont placées dans l’Outbox.
 
 ### Table `books`
 
@@ -68,11 +68,30 @@ Les tags personnalisés récemment utilisés sont dérivés des notes existantes
 reproposés sans nouvelle table. Sur mobile, toutes les suggestions passent
 automatiquement à la ligne ; aucun carrousel horizontal n’est utilisé.
 
+### Table `noteReadingMetadata` — ajoutée en version 4
+
+Cette table sépare le contenu immuable d’une note de son usage de relecture :
+favori, importance, dernière lecture, nombre de lectures et dernière
+suggestion. Sa clé primaire est `noteId`. La migration initialise une ligne
+neutre pour chaque note existante et sa suppression suit celle de la note dans
+la même transaction.
+
+Les composants n’accèdent jamais directement à cette table. Le repository
+dédié garantit l’écriture locale et l’Outbox. Une lecture est comptée une seule
+fois par affichage après 1,5 seconde de présence à l’écran, afin qu’un simple
+passage instantané ne gonfle pas le compteur.
+
+IndexedDB n’accepte pas les booléens comme clés d’index. Les champs métier
+`isFavorite` et `isImportant` sont donc accompagnés de miroirs numériques
+internes `favoriteIndex` et `importantIndex`; ceux-ci ne quittent jamais
+l’appareil et ne font pas partie du schéma Supabase.
+
 ### Tables techniques — ajoutées en version 3
 
 `syncQueue` est une Outbox locale. Sa clé stable
 `{entityType}:{entityId}` compacte automatiquement plusieurs modifications de
-la même entité. Elle contient le type (`book`, `bookNote`, `coverImage`),
+la même entité. Elle contient le type (`book`, `bookNote`,
+`noteReadingMetadata`, `coverImage`),
 l’opération (`upsert`, `delete`), l’identifiant parent éventuel, les dates, le
 nombre d’essais, la dernière erreur et l’état (`pending`, `processing`,
 `failed`). Une suppression remplace l’upsert antérieur. Aucun Blob n’est copié
@@ -110,7 +129,27 @@ IndexedDB ne fournit pas de clés étrangères ni de cascade natives. Ces règle
 - `src/sync` coordonne l’Outbox, Supabase, les imports et les écritures locales
   de restauration sans devenir la source de lecture de l’interface.
 
-La recherche de « Mes idées » joint les notes et leurs livres en mémoire, puis porte sur le passage, la réflexion, la référence, les tags, le titre et l’auteur. La recherche est insensible à la casse et aux accents. Le filtre par tag peut être combiné avec le texte recherché.
+La recherche de « Mes idées » joint les notes, leurs livres et leurs repères de
+relecture en mémoire. Elle porte sur le passage, la réflexion, la référence,
+les tags, le titre et l’auteur. La recherche est insensible à la casse et aux
+accents. Les filtres favoris, importants, récents, peu relus et jamais relus se
+composent avec la recherche et le tag. L’ordre aléatoire est stable pendant une
+session et son seed est conservé dans l’URL du mode lecture.
+
+Le mode `/reading` reconstruit sa sélection depuis des paramètres courts
+(`bookId`, recherche, tag, filtre et tri), jamais depuis une longue liste
+d’identifiants. Il affiche une note à la fois et propose précédent/suivant,
+favori, importance et trois tailles de texte. La redécouverte privilégie le
+tiers des notes suggérées le moins récemment et évite la note courante lorsque
+plusieurs choix existent.
+
+La taille de texte est une préférence légère, distincte des données métier.
+Elle est appliquée immédiatement depuis `localStorage` pour rester disponible
+hors ligne, puis réconciliée avec le champ
+`user_metadata.brainbook_reading_size` du profil Auth Supabase. Une
+modification hors ligne reste marquée localement et est envoyée au retour du
+réseau. Livres, notes et images ne sont toujours jamais placés dans
+`localStorage`.
 
 ## Stratégie des images
 
@@ -158,13 +197,17 @@ l’ancien compte. Une sauvegarde structurée est créée avant ce retrait.
 
 ### Schéma distant et RLS
 
-La migration versionnée crée `public.books` et `public.book_notes`. Les deux
+Les migrations versionnées créent `public.books`, `public.book_notes` et
+`public.note_reading_metadata`. Les tables
 tables utilisent la clé composite `(user_id, id)`, conservent les UUID locaux,
 les dates métier, `deleted_at` et un `server_updated_at` alimenté par trigger.
 La note possède une clé étrangère composite `(user_id, book_id)` vers le livre,
 ce qui interdit de rattacher une note au livre d’un autre utilisateur.
+`note_reading_metadata` possède une clé étrangère composite vers la note du
+même utilisateur, un compteur positif et des index de favoris, importance,
+lecture et suggestion.
 
-RLS est activé sur les deux tables. Les seules policies accordent au rôle
+RLS est activé sur les trois tables. Les seules policies accordent au rôle
 `authenticated` les opérations SELECT, INSERT, UPDATE et DELETE lorsque
 `auth.uid() = user_id`. Le rôle `anon` ne reçoit aucun droit sur les données
 personnelles.
@@ -195,9 +238,11 @@ un délai exponentiel limité, puis traite :
 1. upload des nouvelles couvertures ;
 2. upsert des livres ;
 3. upsert des notes ;
-4. suppressions logiques des notes ;
-5. suppressions logiques des livres ;
-6. suppression des anciens fichiers de couverture.
+4. upsert des repères de relecture ;
+5. suppressions logiques des repères avant leurs notes ;
+6. suppressions logiques des notes ;
+7. suppressions logiques des livres ;
+8. suppression des anciens fichiers de couverture.
 
 Un succès supprime l’entrée. Une erreur temporaire conserve l’entrée et
 incrémente `attemptCount`. Après trois essais, ou immédiatement pour une erreur

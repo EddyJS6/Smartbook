@@ -2,6 +2,7 @@ import type {
   Book,
   BookNote,
   BookStatus,
+  NoteReadingMetadata,
   NoteSourceType,
   UUID,
 } from "@/domain/models";
@@ -14,6 +15,7 @@ import {
 import type {
   RemoteBookRow,
   RemoteNoteRow,
+  RemoteNoteReadingMetadataRow,
 } from "@/sync/types";
 
 const UUID_PATTERN =
@@ -121,6 +123,69 @@ export function noteToRemote(note: BookNote, userId: UUID) {
     created_at: note.createdAt,
     updated_at: note.updatedAt,
     deleted_at: null,
+  };
+}
+
+export function noteReadingMetadataToRemote(
+  metadata: NoteReadingMetadata,
+  userId: UUID,
+) {
+  return {
+    user_id: userId,
+    note_id: metadata.noteId,
+    is_favorite: metadata.isFavorite,
+    is_important: metadata.isImportant,
+    last_read_at: metadata.lastReadAt,
+    read_count: metadata.readCount,
+    last_suggested_at: metadata.lastSuggestedAt,
+    created_at: metadata.createdAt,
+    updated_at: metadata.updatedAt,
+    deleted_at: null,
+  };
+}
+
+export function remoteNoteReadingMetadataToLocal(
+  row: RemoteNoteReadingMetadataRow,
+  expectedUserId: UUID,
+  knownNoteIds: ReadonlySet<UUID>,
+): NoteReadingMetadata {
+  const noteId = requireOwnedUuid(
+    row.note_id,
+    "note_reading_metadata.note_id",
+  );
+  if (row.user_id !== expectedUserId) {
+    throw new RemoteDataValidationError(
+      "Des métadonnées de lecture n’appartiennent pas au compte connecté.",
+    );
+  }
+  if (!knownNoteIds.has(noteId)) {
+    throw new RemoteDataValidationError(
+      "Des métadonnées de lecture référencent une note absente.",
+    );
+  }
+  if (
+    typeof row.is_favorite !== "boolean" ||
+    typeof row.is_important !== "boolean" ||
+    !Number.isInteger(row.read_count) ||
+    row.read_count < 0
+  ) {
+    throw new RemoteDataValidationError(
+      "Métadonnées de lecture distantes invalides.",
+    );
+  }
+  const optionalDate = (value: string | null, field: string) =>
+    value === null ? null : requireDate(value, field);
+  return {
+    noteId,
+    isFavorite: row.is_favorite,
+    isImportant: row.is_important,
+    favoriteIndex: row.is_favorite ? 1 : 0,
+    importantIndex: row.is_important ? 1 : 0,
+    lastReadAt: optionalDate(row.last_read_at, "last_read_at"),
+    readCount: row.read_count,
+    lastSuggestedAt: optionalDate(row.last_suggested_at, "last_suggested_at"),
+    createdAt: requireDate(row.created_at, "metadata.created_at"),
+    updatedAt: requireDate(row.updated_at, "metadata.updated_at"),
   };
 }
 

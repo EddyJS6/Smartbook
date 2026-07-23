@@ -1,5 +1,10 @@
 import Dexie, { type EntityTable } from "dexie";
-import type { Book, BookNote, StoredImage } from "@/domain/models";
+import type {
+  Book,
+  BookNote,
+  NoteReadingMetadata,
+  StoredImage,
+} from "@/domain/models";
 import type {
   LocalSafetyBackup,
   SyncMetadata,
@@ -14,6 +19,7 @@ export class BrainBookDatabase extends Dexie {
   syncQueue!: EntityTable<SyncQueueEntry, "id">;
   syncMetadata!: EntityTable<SyncMetadata, "id">;
   localSafetyBackups!: EntityTable<LocalSafetyBackup, "id">;
+  noteReadingMetadata!: EntityTable<NoteReadingMetadata, "noteId">;
 
   constructor(name = "brainbook") {
     super(name);
@@ -104,6 +110,56 @@ export class BrainBookDatabase extends Dexie {
           lastRestoreAt: null,
           schemaVersion: 1,
         });
+      });
+
+    this.version(4)
+      .stores({
+        books: "&id, updatedAt, title, author, status",
+        images: "&id, createdAt",
+        bookNotes: "&id, bookId, createdAt, updatedAt",
+        noteReadingMetadata:
+          "&noteId, favoriteIndex, importantIndex, lastReadAt, lastSuggestedAt, updatedAt",
+        syncQueue:
+          "&id, [entityType+entityId], entityType, operation, status, createdAt, updatedAt",
+        syncMetadata: "&id, associatedUserId",
+        localSafetyBackups: "&id, createdAt",
+      })
+      .upgrade(async (transaction) => {
+        const notes = await transaction.table<BookNote>("bookNotes").toArray();
+        if (notes.length === 0) return;
+        const timestamp = new Date().toISOString();
+        const metadata = transaction.table<NoteReadingMetadata>(
+          "noteReadingMetadata",
+        );
+        const queue = transaction.table<SyncQueueEntry>("syncQueue");
+        await metadata.bulkPut(
+          notes.map((note) => ({
+            noteId: note.id,
+            isFavorite: false,
+            isImportant: false,
+            favoriteIndex: 0 as const,
+            importantIndex: 0 as const,
+            lastReadAt: null,
+            readCount: 0,
+            lastSuggestedAt: null,
+            createdAt: note.createdAt,
+            updatedAt: timestamp,
+          })),
+        );
+        await queue.bulkPut(
+          notes.map((note) => ({
+            id: syncQueueKey("noteReadingMetadata", note.id),
+            entityType: "noteReadingMetadata" as const,
+            entityId: note.id,
+            parentId: note.bookId,
+            operation: "upsert" as const,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            attemptCount: 0,
+            lastAttemptAt: null,
+            status: "pending" as const,
+          })),
+        );
       });
   }
 }

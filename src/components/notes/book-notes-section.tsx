@@ -78,13 +78,22 @@ export function BookNotesSection({ bookId }: BookNotesSectionProps) {
       ) : null}
 
       {status === "ready" && notes.length > 0 ? (
-        <Link
-          href={`/books/${bookId}/notes/new`}
-          className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-[var(--moss)] px-5 py-3 text-sm font-semibold text-[var(--moss)]"
-        >
-          <Icon name="plus" size={18} />
-          Ajouter une note
-        </Link>
+        <div className="mt-4 grid gap-2">
+          <Link
+            href={`/reading?context=book&bookId=${bookId}`}
+            className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl bg-[var(--moss)] px-5 py-3 text-sm font-semibold text-white"
+          >
+            <Icon name="reader" size={18} />
+            Relire mes notes
+          </Link>
+          <Link
+            href={`/books/${bookId}/notes/new`}
+            className="flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-[var(--moss)] px-5 py-3 text-sm font-semibold text-[var(--moss)]"
+          >
+            <Icon name="plus" size={18} />
+            Ajouter une note
+          </Link>
+        </div>
       ) : null}
     </section>
   );

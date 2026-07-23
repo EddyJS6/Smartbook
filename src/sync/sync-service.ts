@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   Book,
   BookNote,
+  NoteReadingMetadata,
   StoredImage,
   UUID,
 } from "@/domain/models";
@@ -17,6 +18,7 @@ import {
   brainBookDatabase,
   type BrainBookDatabase,
 } from "@/storage/database";
+import { createDefaultReadingMetadata } from "@/storage/repositories/note-reading-metadata-repository";
 import {
   createCoverStoragePath,
   deleteCover,
@@ -28,8 +30,10 @@ import {
   bookToRemote,
   isRemoteDeletionNewer,
   noteToRemote,
+  noteReadingMetadataToRemote,
   remoteBookToLocal,
   remoteNoteToLocal,
+  remoteNoteReadingMetadataToLocal,
   remoteWinsConflict,
   RemoteDataValidationError,
 } from "@/sync/mapping";
@@ -51,6 +55,7 @@ import type {
   LocalSafetyBackup,
   RemoteBookRow,
   RemoteNoteRow,
+  RemoteNoteReadingMetadataRow,
   SyncMetadata,
   SyncQueueEntry,
   SyncStatus,
@@ -60,11 +65,14 @@ const BOOK_COLUMNS =
   "user_id,id,title,author,status,cover_storage_path,created_at,updated_at,deleted_at,server_updated_at";
 const NOTE_COLUMNS =
   "user_id,id,book_id,extracted_text,personal_reflection,page_number,tags,source_type,created_at,updated_at,deleted_at,server_updated_at";
+const READING_METADATA_COLUMNS =
+  "user_id,note_id,is_favorite,is_important,last_read_at,read_count,last_suggested_at,created_at,updated_at,deleted_at,server_updated_at";
 const MAX_RETRY_DELAY_MS = 60_000;
 
 type RemoteSnapshot = {
   books: RemoteBookRow[];
   notes: RemoteNoteRow[];
+  noteReadingMetadata: RemoteNoteReadingMetadataRow[];
 };
 
 type SyncRunResult = {
@@ -162,8 +170,10 @@ function queuePriority(entry: SyncQueueEntry): number {
   if (entry.operation === "upsert") {
     if (entry.entityType === "coverImage") return 10;
     if (entry.entityType === "book") return 20;
-    return 30;
+    if (entry.entityType === "bookNote") return 30;
+    return 35;
   }
+  if (entry.entityType === "noteReadingMetadata") return 38;
   if (entry.entityType === "bookNote") return 40;
   if (entry.entityType === "book") return 50;
   return 60;
@@ -272,7 +282,8 @@ export class SyncService {
     client: SupabaseClient<Database>,
     userId: UUID,
   ): Promise<RemoteSnapshot> {
-    const [booksResponse, notesResponse] = await Promise.all([
+    const [booksResponse, notesResponse, readingMetadataResponse] =
+      await Promise.all([
       client
         .from("books")
         .select(BOOK_COLUMNS)
@@ -281,12 +292,19 @@ export class SyncService {
         .from("book_notes")
         .select(NOTE_COLUMNS)
         .eq("user_id", userId),
+      client
+        .from("note_reading_metadata")
+        .select(READING_METADATA_COLUMNS)
+        .eq("user_id", userId),
     ]);
     if (booksResponse.error) throw booksResponse.error;
     if (notesResponse.error) throw notesResponse.error;
+    if (readingMetadataResponse.error) throw readingMetadataResponse.error;
     return {
       books: (booksResponse.data ?? []) as RemoteBookRow[],
       notes: (notesResponse.data ?? []) as RemoteNoteRow[],
+      noteReadingMetadata:
+        (readingMetadataResponse.data ?? []) as RemoteNoteReadingMetadataRow[],
     };
   }
 
@@ -317,7 +335,11 @@ export class SyncService {
     const remote = await this.fetchRemoteSnapshot(client, userId);
     const activeBooks = remote.books.filter((row) => !row.deleted_at);
     const activeNotes = remote.notes.filter((row) => !row.deleted_at);
-    const latest = [...activeBooks, ...activeNotes]
+    const latest = [
+      ...activeBooks,
+      ...activeNotes,
+      ...remote.noteReadingMetadata.filter((row) => !row.deleted_at),
+    ]
       .map((row) => row.server_updated_at)
       .filter((value) => Number.isFinite(Date.parse(value)))
       .sort()
@@ -369,9 +391,10 @@ export class SyncService {
   }
 
   private async seedFullBackupQueue(timestamp = new Date().toISOString()) {
-    const [books, notes] = await Promise.all([
+    const [books, notes, noteReadingMetadata] = await Promise.all([
       this.database.books.toArray(),
       this.database.bookNotes.toArray(),
+      this.database.noteReadingMetadata.toArray(),
     ]);
     await this.database.transaction(
       "rw",
@@ -402,6 +425,18 @@ export class SyncService {
             this.database,
             "bookNote",
             note.id,
+            "upsert",
+            note.bookId,
+            timestamp,
+          );
+        }
+        for (const metadata of noteReadingMetadata) {
+          const note = notes.find((candidate) => candidate.id === metadata.noteId);
+          if (!note) continue;
+          await enqueueSyncOperation(
+            this.database,
+            "noteReadingMetadata",
+            metadata.noteId,
             "upsert",
             note.bookId,
             timestamp,
@@ -535,7 +570,40 @@ export class SyncService {
       return;
     }
 
+    if (entry.entityType === "noteReadingMetadata") {
+      if (entry.operation === "delete") {
+        const { error } = await client
+          .from("note_reading_metadata")
+          .update({ deleted_at: entry.updatedAt })
+          .eq("user_id", userId)
+          .eq("note_id", entry.entityId);
+        if (error) throw error;
+        return;
+      }
+      const metadata = await this.database.noteReadingMetadata.get(
+        entry.entityId,
+      );
+      if (!metadata) {
+        throw new RemoteDataValidationError(
+          "Les métadonnées de lecture locales n’existent plus.",
+        );
+      }
+      const { error } = await client
+        .from("note_reading_metadata")
+        .upsert(noteReadingMetadataToRemote(metadata, userId), {
+          onConflict: "user_id,note_id",
+        });
+      if (error) throw error;
+      return;
+    }
+
     if (entry.operation === "delete") {
+      const metadataResult = await client
+        .from("note_reading_metadata")
+        .update({ deleted_at: entry.updatedAt })
+        .eq("user_id", userId)
+        .eq("note_id", entry.entityId);
+      if (metadataResult.error) throw metadataResult.error;
       const { error } = await client
         .from("book_notes")
         .update({ deleted_at: entry.updatedAt })
@@ -729,11 +797,82 @@ export class SyncService {
       }
     }
 
+    const currentNotes = new Map(
+      (await this.database.bookNotes.toArray()).map((note) => [note.id, note]),
+    );
+    for (const noteId of noteIdsToDelete) currentNotes.delete(noteId);
+    for (const note of notesToPut) currentNotes.set(note.id, note);
+    for (const bookId of preparedBooks.bookIdsToDelete) {
+      for (const [noteId, note] of currentNotes) {
+        if (note.bookId === bookId) currentNotes.delete(noteId);
+      }
+    }
+    const knownNoteIds = new Set(currentNotes.keys());
+    const readingMetadataToPut: NoteReadingMetadata[] = [];
+    const readingMetadataIdsToDelete: UUID[] = [];
+    const remoteActiveMetadataIds = new Set<UUID>();
+
+    for (const row of remote.noteReadingMetadata) {
+      if (row.user_id !== userId) {
+        warnings.push(
+          "Des métadonnées de lecture d’un autre compte ont été ignorées.",
+        );
+        continue;
+      }
+      const noteId = row.note_id as UUID;
+      const local = await this.database.noteReadingMetadata.get(noteId);
+      const pending = ignorePending
+        ? undefined
+        : await this.database.syncQueue.get(
+            syncQueueKey("noteReadingMetadata", noteId),
+          );
+      if (row.deleted_at) {
+        if (
+          local &&
+          (!pending ||
+            (pending.operation === "upsert" &&
+              isRemoteDeletionNewer(row.deleted_at, local.updatedAt)))
+        ) {
+          readingMetadataIdsToDelete.push(noteId);
+        }
+        continue;
+      }
+      remoteActiveMetadataIds.add(noteId);
+      if (
+        pending ||
+        (local &&
+          !remoteWinsConflict(local.updatedAt, row.updated_at, false))
+      ) {
+        continue;
+      }
+      try {
+        readingMetadataToPut.push(
+          remoteNoteReadingMetadataToLocal(row, userId, knownNoteIds),
+        );
+      } catch (error) {
+        warnings.push(safeErrorMessage(error));
+      }
+    }
+
+    const existingMetadataIds = new Set(
+      (await this.database.noteReadingMetadata.toArray()).map(
+        (metadata) => metadata.noteId,
+      ),
+    );
+    const defaultMetadata = [...currentNotes.values()]
+      .filter(
+        (note) =>
+          !existingMetadataIds.has(note.id) &&
+          !remoteActiveMetadataIds.has(note.id),
+      )
+      .map((note) => createDefaultReadingMetadata(note.id, note.createdAt));
+
     this.assertCurrent(generation);
     await this.database.transaction(
       "rw",
       this.database.books,
       this.database.bookNotes,
+      this.database.noteReadingMetadata,
       this.database.images,
       this.database.syncQueue,
       async () => {
@@ -743,6 +882,14 @@ export class SyncService {
             .equals(bookId)
             .toArray();
           await this.database.bookNotes.bulkDelete(notes.map((note) => note.id));
+          await this.database.noteReadingMetadata.bulkDelete(
+            notes.map((note) => note.id),
+          );
+          await this.database.syncQueue.bulkDelete(
+            notes.map((note) =>
+              syncQueueKey("noteReadingMetadata", note.id),
+            ),
+          );
           await this.database.books.delete(bookId);
           await this.database.syncQueue.delete(syncQueueKey("book", bookId));
         }
@@ -759,12 +906,44 @@ export class SyncService {
         }
         if (noteIdsToDelete.length > 0) {
           await this.database.bookNotes.bulkDelete(noteIdsToDelete);
+          await this.database.noteReadingMetadata.bulkDelete(noteIdsToDelete);
           await this.database.syncQueue.bulkDelete(
-            noteIdsToDelete.map((id) => syncQueueKey("bookNote", id)),
+            noteIdsToDelete.flatMap((id) => [
+              syncQueueKey("bookNote", id),
+              syncQueueKey("noteReadingMetadata", id),
+            ]),
           );
         }
         if (notesToPut.length > 0) {
           await this.database.bookNotes.bulkPut(notesToPut);
+        }
+        if (readingMetadataIdsToDelete.length > 0) {
+          await this.database.noteReadingMetadata.bulkDelete(
+            readingMetadataIdsToDelete,
+          );
+          await this.database.syncQueue.bulkDelete(
+            readingMetadataIdsToDelete.map((id) =>
+              syncQueueKey("noteReadingMetadata", id),
+            ),
+          );
+        }
+        if (readingMetadataToPut.length > 0) {
+          await this.database.noteReadingMetadata.bulkPut(
+            readingMetadataToPut,
+          );
+        }
+        for (const metadata of defaultMetadata) {
+          const note = currentNotes.get(metadata.noteId);
+          if (!note) continue;
+          await this.database.noteReadingMetadata.put(metadata);
+          await enqueueSyncOperation(
+            this.database,
+            "noteReadingMetadata",
+            metadata.noteId,
+            "upsert",
+            note.bookId,
+            metadata.updatedAt,
+          );
         }
       },
     );
@@ -781,17 +960,19 @@ export class SyncService {
   private async createSafetyBackup(
     reason: LocalSafetyBackup["reason"],
   ): Promise<LocalSafetyBackup> {
-    const [books, notes] = await Promise.all([
+    const [books, notes, noteReadingMetadata] = await Promise.all([
       this.database.books.toArray(),
       this.database.bookNotes.toArray(),
+      this.database.noteReadingMetadata.toArray(),
     ]);
     const backup: LocalSafetyBackup = {
       id: createEntityId(),
       createdAt: new Date().toISOString(),
       reason,
-      schemaVersion: 1,
+      schemaVersion: 2,
       books,
       notes,
+      noteReadingMetadata,
       coverImageIds: books.flatMap((book) =>
         book.coverImageId ? [book.coverImageId] : [],
       ),
@@ -836,13 +1017,17 @@ export class SyncService {
     if (localCount > 0) await this.createSafetyBackup("account_change");
     await this.database.transaction(
       "rw",
-      this.database.books,
-      this.database.bookNotes,
-      this.database.images,
-      this.database.syncQueue,
-      this.database.syncMetadata,
+      [
+        this.database.books,
+        this.database.bookNotes,
+        this.database.noteReadingMetadata,
+        this.database.images,
+        this.database.syncQueue,
+        this.database.syncMetadata,
+      ],
       async () => {
         await this.database.bookNotes.clear();
+        await this.database.noteReadingMetadata.clear();
         await this.database.books.clear();
         await this.database.images.clear();
         await this.database.syncQueue.clear();
@@ -953,6 +1138,33 @@ export class SyncService {
           warnings.push(safeErrorMessage(error));
         }
       }
+      const restoredNoteIds = new Set(restoredNotes.map((note) => note.id));
+      const restoredReadingMetadata: NoteReadingMetadata[] = [];
+      for (const row of remote.noteReadingMetadata.filter(
+        (metadata) => !metadata.deleted_at,
+      )) {
+        try {
+          restoredReadingMetadata.push(
+            remoteNoteReadingMetadataToLocal(row, userId, restoredNoteIds),
+          );
+        } catch (error) {
+          warnings.push(safeErrorMessage(error));
+        }
+      }
+      const restoredMetadataIds = new Set(
+        restoredReadingMetadata.map((metadata) => metadata.noteId),
+      );
+      const metadataDefaultsToUpload: NoteReadingMetadata[] = [];
+      for (const note of restoredNotes) {
+        if (!restoredMetadataIds.has(note.id)) {
+          const metadata = createDefaultReadingMetadata(
+            note.id,
+            note.createdAt,
+          );
+          restoredReadingMetadata.push(metadata);
+          metadataDefaultsToUpload.push(metadata);
+        }
+      }
       this.assertCurrent(generation);
       const localCount =
         (await this.database.books.count()) +
@@ -962,13 +1174,17 @@ export class SyncService {
       const now = new Date().toISOString();
       await this.database.transaction(
         "rw",
-        this.database.books,
-        this.database.bookNotes,
-        this.database.images,
-        this.database.syncQueue,
-        this.database.syncMetadata,
+        [
+          this.database.books,
+          this.database.bookNotes,
+          this.database.noteReadingMetadata,
+          this.database.images,
+          this.database.syncQueue,
+          this.database.syncMetadata,
+        ],
         async () => {
           await this.database.bookNotes.clear();
+          await this.database.noteReadingMetadata.clear();
           await this.database.books.clear();
           await this.database.images.clear();
           await this.database.syncQueue.clear();
@@ -980,6 +1196,25 @@ export class SyncService {
           }
           if (restoredNotes.length > 0) {
             await this.database.bookNotes.bulkAdd(restoredNotes);
+          }
+          if (restoredReadingMetadata.length > 0) {
+            await this.database.noteReadingMetadata.bulkAdd(
+              restoredReadingMetadata,
+            );
+          }
+          for (const metadata of metadataDefaultsToUpload) {
+            const note = restoredNotes.find(
+              (candidate) => candidate.id === metadata.noteId,
+            );
+            if (!note) continue;
+            await enqueueSyncOperation(
+              this.database,
+              "noteReadingMetadata",
+              metadata.noteId,
+              "upsert",
+              note.bookId,
+              metadata.updatedAt,
+            );
           }
           await updateSyncMetadata(this.database, {
             associatedUserId: userId,
@@ -1049,14 +1284,32 @@ export class SyncService {
       await this.ensureAccountAllowed(userId);
       const client = await this.requireAuthenticatedClient(userId);
       const remote = await this.fetchRemoteSnapshot(client, userId);
-      const [localBooks, localNotes] = await Promise.all([
+      const [localBooks, localNotes, localReadingMetadata] = await Promise.all([
         this.database.books.toArray(),
         this.database.bookNotes.toArray(),
+        this.database.noteReadingMetadata.toArray(),
       ]);
       const localBookIds = new Set(localBooks.map((book) => book.id));
       const localNoteIds = new Set(localNotes.map((note) => note.id));
+      const localReadingMetadataIds = new Set(
+        localReadingMetadata.map((metadata) => metadata.noteId),
+      );
       const deletedAt = new Date().toISOString();
 
+      for (const row of remote.noteReadingMetadata) {
+        this.assertCurrent(generation);
+        if (
+          !row.deleted_at &&
+          !localReadingMetadataIds.has(row.note_id as UUID)
+        ) {
+          const { error } = await client
+            .from("note_reading_metadata")
+            .update({ deleted_at: deletedAt })
+            .eq("user_id", userId)
+            .eq("note_id", row.note_id);
+          if (error) throw error;
+        }
+      }
       for (const row of remote.notes) {
         this.assertCurrent(generation);
         if (!row.deleted_at && !localNoteIds.has(row.id as UUID)) {
