@@ -3,28 +3,15 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { PageDetectionResult } from "@/domain/document-types";
-import { fallbackPageCorners } from "@/domain/document-geometry";
 import { ScanFlow } from "@/components/notes/scan-flow";
 
 const mocks = vi.hoisted(() => ({
-  detectPage: vi.fn(),
-  rectifyPage: vi.fn(),
   prepareOcrImage: vi.fn(),
   recognizePageWithAi: vi.fn(),
 }));
 
-vi.mock("@/services/document-processing-service", () => ({
-  detectPage: mocks.detectPage,
-  rectifyPage: mocks.rectifyPage,
-  DocumentProcessingError: class DocumentProcessingError extends Error {
-    code = "opencv";
-  },
-}));
-
 vi.mock("@/lib/ocr-image-processing", () => ({
   OcrImageError: class OcrImageError extends Error {},
-  normalizeRightAngle: (rotation: number) => (rotation + 360) % 360,
   prepareOcrImage: mocks.prepareOcrImage,
 }));
 
@@ -34,14 +21,6 @@ vi.mock("@/services/ai-recognition-service", () => ({
   },
   recognizePageWithAi: mocks.recognizePageWithAi,
 }));
-
-function deferred<T>() {
-  let resolve!: (value: T) => void;
-  const promise = new Promise<T>((nextResolve) => {
-    resolve = nextResolve;
-  });
-  return { promise, resolve };
-}
 
 function button(text: string): HTMLButtonElement {
   const found = [...document.querySelectorAll("button")].find((candidate) =>
@@ -53,9 +32,10 @@ function button(text: string): HTMLButtonElement {
   return found;
 }
 
-describe("ScanFlow document adjustment", () => {
+describe("ScanFlow quick scan", () => {
   let container: HTMLDivElement;
   let root: Root;
+  let file: File;
 
   beforeEach(() => {
     (
@@ -72,19 +52,10 @@ describe("ScanFlow document adjustment", () => {
       value: vi.fn(),
     });
     mocks.prepareOcrImage.mockResolvedValue({
-      blob: new Blob(["image"], { type: "image/jpeg" }),
+      blob: new Blob(["prepared"], { type: "image/jpeg" }),
       width: 1_200,
       height: 1_600,
       rotation: 0,
-      mode: "original",
-    });
-    mocks.rectifyPage.mockResolvedValue({
-      blob: new Blob(["rectified"], { type: "image/jpeg" }),
-      width: 1_100,
-      height: 1_500,
-      mimeType: "image/jpeg",
-      sourceCorners: fallbackPageCorners(),
-      wasAutomaticallyDetected: false,
       mode: "original",
     });
     mocks.recognizePageWithAi.mockResolvedValue({
@@ -96,6 +67,7 @@ describe("ScanFlow document adjustment", () => {
         outputTokens: 12,
       },
     });
+    file = new File(["image"], "page.jpg", { type: "image/jpeg" });
     container = document.createElement("div");
     document.body.append(container);
     root = createRoot(container);
@@ -107,136 +79,49 @@ describe("ScanFlow document adjustment", () => {
     vi.clearAllMocks();
   });
 
-  it("affiche les coins de secours avant la fin de la détection", async () => {
-    const detection = deferred<PageDetectionResult>();
-    mocks.detectPage.mockReturnValue(detection.promise);
+  it("affiche directement la photo avec le seul bouton Envoyer", () => {
     act(() =>
-      root.render(
-        <ScanFlow onPassageReady={vi.fn()} onExitToManual={vi.fn()} />,
-      ),
+      root.render(<ScanFlow file={file} onPassageReady={vi.fn()} />),
     );
-    const input = document.querySelector("#scan-library-image");
-    const file = new File(["image"], "page.jpg", { type: "image/jpeg" });
-    Object.defineProperty(input, "files", {
-      configurable: true,
-      value: { 0: file, length: 1, item: () => file },
-    });
 
-    await act(async () => {
-      input?.dispatchEvent(new Event("change", { bubbles: true }));
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
-    expect(document.body.textContent).toContain("Ajuster la page");
     expect(
-      document.querySelectorAll('button[aria-label^="Déplacer coin"]'),
-    ).toHaveLength(4);
-    expect(document.body.textContent).toContain(
-      "Recherche approximative des bords",
-    );
-
-    await act(async () => {
-      detection.resolve({
-        status: "notDetected",
-        processingWidth: 900,
-        processingHeight: 1_200,
-        warning:
-          "Les limites de la page n’ont pas été trouvées automatiquement.",
-        photographWarnings: [],
-      });
-      await detection.promise;
-    });
-    expect(document.body.textContent).toContain(
-      "Les limites de la page n’ont pas été trouvées",
-    );
+      document.querySelector('img[alt="Page à envoyer à la reconnaissance IA"]'),
+    ).toBeTruthy();
+    expect(document.body.textContent).not.toContain("Redresser");
+    expect(document.body.textContent).not.toContain("Langue principale");
+    expect([...document.querySelectorAll("button")].map((item) =>
+      item.textContent?.trim(),
+    )).toEqual(["Envoyer"]);
   });
 
-  it("redresse puis affiche la comparaison avant/après", async () => {
-    mocks.detectPage.mockResolvedValue({
-      status: "detected",
-      corners: fallbackPageCorners(),
-      processingWidth: 900,
-      processingHeight: 1_200,
-      warning: "La page a été détectée.",
-      photographWarnings: [],
-    });
+  it("prépare puis envoie la photo en un appui et ajoute directement le texte choisi", async () => {
+    const onPassageReady = vi.fn();
     act(() =>
       root.render(
-        <ScanFlow onPassageReady={vi.fn()} onExitToManual={vi.fn()} />,
+        <ScanFlow file={file} onPassageReady={onPassageReady} />,
       ),
     );
-    const input = document.querySelector("#scan-library-image");
-    const file = new File(["image"], "page.jpg", { type: "image/jpeg" });
-    Object.defineProperty(input, "files", {
-      configurable: true,
-      value: { 0: file, length: 1, item: () => file },
-    });
+
     await act(async () => {
-      input?.dispatchEvent(new Event("change", { bubbles: true }));
+      button("Envoyer").click();
       await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      button("Redresser la page").click();
       await Promise.resolve();
       await Promise.resolve();
     });
 
-    expect(mocks.rectifyPage).toHaveBeenCalledOnce();
-    expect(document.body.textContent).toContain("Comparer avant et après");
-    expect(document.querySelector('img[alt="Page redressée"]')).toBeTruthy();
-  });
-
-  it("envoie la page préparée à l’IA puis affiche le texte éditable", async () => {
-    mocks.detectPage.mockResolvedValue({
-      status: "detected",
-      corners: fallbackPageCorners(),
-      processingWidth: 900,
-      processingHeight: 1_200,
-      warning: "La page a été détectée.",
-      photographWarnings: [],
-    });
-    act(() =>
-      root.render(
-        <ScanFlow onPassageReady={vi.fn()} onExitToManual={vi.fn()} />,
-      ),
-    );
-    const input = document.querySelector("#scan-library-image");
-    const file = new File(["image"], "page.jpg", { type: "image/jpeg" });
-    Object.defineProperty(input, "files", {
-      configurable: true,
-      value: { 0: file, length: 1, item: () => file },
-    });
-    await act(async () => {
-      input?.dispatchEvent(new Event("change", { bubbles: true }));
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      button("Redresser la page").click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      button("Utiliser la page redressée").click();
-      await Promise.resolve();
-    });
-    await act(async () => {
-      button("Lancer la reconnaissance IA").click();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-
+    expect(mocks.prepareOcrImage).toHaveBeenCalledWith(file, 0, "original");
     expect(mocks.recognizePageWithAi).toHaveBeenCalledWith(
       expect.any(Blob),
       "fra",
       expect.any(AbortSignal),
     );
-    expect(
-      document.querySelector("#ai-recognized-text"),
-    ).toHaveProperty(
+    expect(document.querySelector("#ai-recognized-text")).toHaveProperty(
       "value",
+      "Les mythes organisent les sociétés.",
+    );
+
+    act(() => button("Utiliser tout le texte").click());
+    expect(onPassageReady).toHaveBeenCalledWith(
       "Les mythes organisent les sociétés.",
     );
   });

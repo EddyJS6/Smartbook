@@ -7,15 +7,3 @@ export const OCR_LANGUAGES = [
 export type OcrLanguage = (typeof OCR_LANGUAGES)[number]["code"];
 
 export type OcrImageMode = "original" | "grayscale" | "enhanced";
-
-export type ScanStage =
-  | "idle"
-  | "preparingImage"
-  | "adjustingPage"
-  | "rectifyingPage"
-  | "pagePreview"
-  | "readyForOcr"
-  | "sendingToAi"
-  | "selection"
-  | "review"
-  | "error";

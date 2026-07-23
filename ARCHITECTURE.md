@@ -121,39 +121,24 @@ du navigateur et l’appel serveur possède un délai maximal de 55 secondes.
 L’absence de clé, la limite API, le hors-ligne et les erreurs temporaires sont
 présentés sans perdre la photo préparée.
 
-Les langues proposées restent le français (`fra`), l’anglais (`eng`) et le
-polonais (`pol`). Elles servent d’indication au modèle et non au téléchargement
-d’un modèle local. La reconnaissance IA nécessite toujours Internet.
+Le parcours rapide fixe actuellement la langue principale au français (`fra`).
+La reconnaissance IA nécessite toujours Internet.
 
-## Détection et redressement de page
+## Capture rapide
 
-Le scanner embarque la distribution autonome officielle **OpenCV.js 4.13.0** dans `public/vendor/opencv/4.13.0/opencv.js`. Sa source, sa licence Apache 2.0 et son empreinte SHA-256 sont documentées dans le `README.md` placé à côté du fichier. Le WebAssembly est incorporé dans ce JavaScript : le déploiement ne dépend donc pas d’un CDN OpenCV.
+Le formulaire d’ajout conserve la saisie manuelle visible et place un bouton
+« Scanner une page » immédiatement sous le livre. Ce bouton déclenche
+synchroniquement un `input type="file"` avec `accept="image/*"` et
+`capture="environment"`, ce qui ouvre directement l’interface de prise de vue
+sur iPhone. Le système ou Safari reste seul responsable d’une éventuelle
+autorisation initiale : une application web ne peut pas la contourner.
 
-OpenCV n’est chargé ni au démarrage de l’application, ni dans le thread principal. Le parcours scanner crée à la demande un unique worker classique, `public/workers/document-processing-worker.js`, qui charge la ressource locale avec `importScripts`. Les pixels RGBA transitent par des `ArrayBuffer` transférables afin d’éviter leur duplication entre le thread d’interface et le worker. Le décodage initial et l’encodage JPEG final restent dans Canvas, car ces API sont mieux prises en charge dans le contexte de la page.
-
-Le worker OpenCV est terminé lors d’une annulation, d’un nouveau fichier, d’un abandon, du démontage du scanner et après le transfert du passage vers la note. Chaque `cv.Mat`, `MatVector`, noyau morphologique et matrice de transformation est libéré dans un bloc `finally`. Le module Emscripten officiel expose temporairement une méthode `then` non standard ; le worker attend `cv.calledRun`, puis retire cette propriété pour empêcher une assimilation récursive du module comme une Promise.
-
-La détection utilise une copie dont le grand côté ne dépasse pas **1 000 px** :
-
-1. conversion en niveaux de gris, mesure de luminosité et flou gaussien ;
-2. deux passages Canny (`45/135` et `28/92`) puis fermeture morphologique ;
-3. extraction des contours externes, avec un maximum de 420 contours inspectés pour protéger la mémoire mobile ;
-4. approximation polygonale (`epsilon = 2,2 %` du périmètre) et conservation des quadrilatères convexes ;
-5. secours par seuillage adaptatif lorsque les contours Canny sont insuffisants.
-
-Le score final est une fonction TypeScript pure qui combine aire, angles proches de 90°, centrage, proximité des bords et proportions plausibles. Un résultat fort est accepté à partir de `0,66`, un résultat moyen à partir de `0,42`, et les cas faibles reviennent au cadre de secours. Ce cadre laisse une marge normalisée de 5,5 % autour de l’image.
-
-Les quatre coins sont toujours conservés sous forme de coordonnées normalisées `[0, 1]`. Des fonctions pures assurent les conversions entre image source, image de détection et aperçu, l’ordre haut-gauche / haut-droit / bas-droit / bas-gauche, la rotation par pas de 90°, la convexité, les croisements et la surface minimale. L’automatisme ne remplace jamais l’utilisateur : les quatre poignées tactiles de 44 px restent disponibles, avec polygone, assombrissement extérieur, loupe, zoom 100/150/200 %, rotations et réglage accessible au clavier.
-
-Le redressement calcule la taille de sortie depuis les longueurs opposées, avec un grand côté plafonné à **2 600 px** et 6,5 mégapixels. OpenCV applique `getPerspectiveTransform`, `warpPerspective`, puis l’un des trois modes :
-
-- `Original` : couleur corrigée ;
-- `Niveaux de gris` : conversion monochrome ;
-- `Contraste renforcé` : niveaux de gris puis égalisation d’histogramme.
-
-Un aperçu avant/après est présenté avant l’OCR. Toute rotation ou toute modification des coins invalide l’ancien résultat OCR. En cas de chargement impossible, de page indétectable, de géométrie invalide ou d’échec du redressement, la photo non redressée reste utilisable et la saisie manuelle reste accessible.
-
-Le service worker ne précache pas les quelque 11 Mo d’OpenCV. Il met en cache à la demande le worker et la ressource versionnée après leur première utilisation. Ainsi, un premier scan nécessite le réseau si ce cache n’existe pas ; les scans suivants peuvent réutiliser OpenCV hors ligne. Une mise à jour de version ou d’empreinte impose un nouveau chemin versionné ou un nouveau nom de cache.
+Après validation de la photo dans l’interface iOS, BrainBook affiche uniquement
+son aperçu, l’information de confidentialité et le bouton « Envoyer ». Il n’y a
+plus de détection des bords, de réglage des coins, de redressement, de
+comparaison avant/après, de rotation, de choix de filtre ou de langue dans ce
+parcours. Les anciens modules OpenCV peuvent rester présents comme code
+historique, mais ils ne sont plus importés ni chargés par `ScanFlow`.
 
 ## Pipeline d’image avant reconnaissance IA
 
@@ -162,13 +147,15 @@ La photo reste temporaire et côté client :
 1. validation du fichier et de sa taille, limitée à 20 Mo ;
 2. décodage réel avec `createImageBitmap` orienté selon les métadonnées, puis secours `HTMLImageElement` ;
 3. refus des dimensions nulles, trop petites (moins de 320 px sur un côté) ou supérieures à 60 mégapixels ;
-4. affichage immédiat du cadre manuel de secours, pendant que la détection automatique travaille sur une copie réduite ;
-5. réglage des quatre coins et, si demandé, redressement en perspective dans le worker OpenCV ;
-6. choix entre la page redressée et l’original, puis mode `Original`, `Niveaux de gris` ou `Contraste renforcé` ;
-7. redimensionnement proportionnel sans agrandissement, avec un grand côté OCR limité à **2 400 px** ;
-8. export temporaire JPEG de qualité 0,90, utilisé à la fois pour l’aperçu et l’OCR.
+4. aperçu immédiat du fichier choisi, sans traitement ni envoi ;
+5. après l’action explicite « Envoyer », redimensionnement proportionnel sans agrandissement, avec un grand côté OCR limité à **2 400 px** ;
+6. export temporaire JPEG de qualité 0,90, puis appel de la reconnaissance IA en français.
 
-Ces limites offrent des caractères suffisamment détaillés tout en évitant de traiter simultanément plusieurs photos iPhone pleine résolution. Le code ne conserve qu’une référence au fichier choisi et les Blobs temporaires nécessaires à l’étape courante. Les `ImageBitmap`, canvases, anciens Blobs, buffers transférés et Object URLs sont fermés, réduits, remplacés ou révoqués dès qu’ils ne sont plus utiles. OpenCV termine avant l’envoi de la page préparée à la reconnaissance IA.
+Ces limites offrent des caractères suffisamment détaillés tout en évitant de
+traiter plusieurs photos iPhone pleine résolution. Le code ne conserve qu’une
+référence au fichier choisi et le Blob temporaire préparé. Les `ImageBitmap`,
+canvases et Object URLs sont fermés, réduits ou révoqués dès qu’ils ne sont plus
+utiles.
 
 HEIC/HEIF fonctionne uniquement lorsque Safari peut le décoder nativement. Aucune bibliothèque lourde de conversion n’est ajoutée ; un échec propose de reprendre la photo ou d’utiliser un JPEG.
 
@@ -182,10 +169,10 @@ sélection native iOS ou utiliser l’intégralité du texte.
 
 Le texte visible dans la photo est explicitement traité comme une donnée à
 transcrire, jamais comme une instruction. L’IA doit utiliser `[illisible]`
-plutôt que d’inventer un passage. Une étape de vérification reste obligatoire,
-car un modèle vision peut encore omettre ou confondre un mot.
-
-Après sélection, une étape de vérification conserve un passage entièrement éditable. « Ajouter à ma note » remplit le même `extractedText` que la saisie manuelle, conserve réflexion, page et tags, puis marque le brouillon `sourceType: "scan"`.
+plutôt que d’inventer un passage. Le résultat reste entièrement éditable.
+« Utiliser la sélection » ou « Utiliser tout le texte » remplit directement le
+même `extractedText` que la saisie manuelle, conserve réflexion, page et tags,
+puis marque le brouillon `sourceType: "scan"`.
 
 ## Persistance et confidentialité du scan
 
@@ -201,9 +188,7 @@ Les données envoyées à l’API OpenAI ne servent pas à entraîner les modèl
 - les champs utilisent une taille de texte de 16 px pour éviter le zoom automatique de Safari ;
 - le sélecteur de couverture utilise `accept="image/*"` sans forcer `capture`, afin de laisser Safari proposer photothèque ou appareil photo ;
 - le traitement d’image privilégie `createImageBitmap` et utilise un secours `HTMLImageElement` ;
-- les poignées du recadrage utilisent Pointer Events, capture du pointeur, `requestAnimationFrame`, `pointercancel` et une cible minimale de 44 px ;
-- la loupe et les zooms permettent un réglage fin sans exiger une précision parfaite du doigt ;
-- les calculs OpenCV sont limités, séquentiels et isolés dans un worker unique ;
+- le bouton scanner déclenche directement l’input de capture dans le même geste utilisateur pour rester compatible avec Safari iOS ;
 - les safe areas, cibles tactiles et la barre de navigation existante sont conservées ;
 - les erreurs de quota, d’indisponibilité du stockage et de décodage d’image sont traduites en messages compréhensibles.
 
@@ -217,10 +202,14 @@ Les UUID locaux seront aussi les identifiants distants. `updatedAt` permettra pl
 
 ## Limites actuelles
 
-La détection et le redressement corrigent une page globalement plane ; ils ne déforment pas localement une page incurvée près de la reliure. Un fort reflet, un faible contraste, une page partiellement masquée ou un fond de couleur proche peut exiger de replacer les coins manuellement. Une perspective extrême peut rester imparfaite. La photo originale et la transcription textuelle éditable servent toujours de secours.
+Le scan rapide ne corrige pas la perspective et ne recadre pas la page. La
+photo doit donc être prise aussi parallèle, nette et rapprochée que possible.
+La photo originale et la transcription textuelle éditable servent de secours.
 
 Il n’y a ni scan multipage, ni import PDF, ni détection automatique de langue.
 
 Il n’y a toujours ni authentification ni synchronisation distante. La route payante est donc protégée seulement par l’origine, des limites de taille et une limite de fréquence par instance. Un déploiement publiquement connu doit ajouter une règle Vercel de rate limiting et une limite de dépense OpenAI stricte. Les suppressions sont définitives sur l’appareil et les confirmations l’indiquent explicitement.
 
-Le service worker gère le shell, les routes visitées, les ressources statiques et les ressources techniques OpenCV/OCR téléchargées à la demande. Les données métier IndexedDB et les photos de page ne sont ni mises en cache par le service worker ni synchronisées à distance.
+Le service worker gère le shell, les routes visitées et les ressources statiques.
+Les données métier IndexedDB et les photos de page ne sont ni mises en cache par
+le service worker ni synchronisées à distance.

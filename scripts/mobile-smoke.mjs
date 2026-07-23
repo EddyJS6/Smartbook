@@ -536,24 +536,12 @@ try {
   const scannerEnabled = await evaluate(
     `Array.from(document.querySelectorAll("button")).some((button) => !button.disabled && button.textContent.includes("Scanner une page"))`,
   );
-  console.log("[smoke] scanner ouvert");
+  console.log("[smoke] scan rapide disponible");
   const opencvRequestsBeforeActivation = networkRequests.filter((request) =>
     request.url.includes("/vendor/opencv/4.13.0/opencv.js"),
   );
-  await evaluate(`(() => {
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.includes("Scanner une page")
-    );
-    if (!button) throw new Error("Mode scanner introuvable");
-    button.click();
-    return true;
-  })()`);
-  await waitFor(
-    `document.querySelector("#scan-camera-image") !== null && document.body.innerText.includes("envoyée temporairement à OpenAI")`,
-    "Le mode scanner ne s’est pas activé.",
-  );
   const cameraCaptureConfigured = await evaluate(
-    `document.querySelector("#scan-camera-image")?.getAttribute("capture") === "environment" && !document.querySelector("#scan-library-image")?.hasAttribute("capture")`,
+    `document.querySelector("#scan-camera-image")?.getAttribute("capture") === "environment" && document.querySelector("#scan-camera-image")?.getAttribute("accept") === "image/*"`,
   );
   const requestsBeforePhoto = networkRequests.length;
   await evaluate(`(async () => {
@@ -586,7 +574,7 @@ try {
     });
     const transfer = new DataTransfer();
     transfer.items.add(file);
-    const input = document.querySelector("#scan-library-image");
+    const input = document.querySelector("#scan-camera-image");
     Object.defineProperty(input, "files", {
       configurable: true,
       value: transfer.files
@@ -596,165 +584,31 @@ try {
   })()`);
   console.log("[smoke] photo de test transmise");
   await waitFor(
-    `document.querySelector('img[alt="Page à recadrer"]') !== null && document.body.innerText.includes("Ajuster la page")`,
-    "L’étape d’ajustement n’a pas affiché la photo.",
+    `document.querySelector('img[alt="Page à envoyer à la reconnaissance IA"]') !== null && document.body.innerText.includes("Votre photo est prête")`,
+    "L’aperçu du scan rapide n’a pas affiché la photo.",
     120,
   );
-  console.log("[smoke] ajustement affiché");
-  const fallbackCornersVisibleImmediately = await evaluate(
-    `document.querySelectorAll('button[aria-label^="Déplacer coin"]').length === 4`,
+  const quickPreviewOnlySend = await evaluate(
+    `JSON.stringify(Array.from(document.querySelectorAll('section[aria-label="Scanner une page"] button')).map((button) => button.textContent.trim())) === JSON.stringify(["Envoyer"]) && !document.body.innerText.includes("Redresser")`,
   );
-  let opencvRequestsAfterPhoto = [];
-  await waitFor(
-    `!document.body.innerText.includes("Recherche approximative des bords")`,
-    "La détection automatique ne s’est pas terminée.",
-    400,
-  );
-  console.log("[smoke] détection terminée");
-  opencvRequestsAfterPhoto = networkRequests.filter((request) =>
-    request.url.includes("/vendor/opencv/4.13.0/opencv.js"),
-  );
-  const automaticDetectionCompleted = await evaluate(
-    `document.body.innerText.includes("détectée") || document.body.innerText.includes("Placez les quatre coins") || document.body.innerText.includes("placer les coins")`,
-  );
-  await evaluate(`document
-    .querySelector('button[aria-label="Déplacer coin haut gauche"]')
-    ?.scrollIntoView({ block: "center", inline: "center" })`);
-  await new Promise((resolve) => setTimeout(resolve, 120));
-  const firstCornerCenter = await evaluate(`(() => {
-    const handle = document.querySelector('button[aria-label="Déplacer coin haut gauche"]');
-    const rect = handle?.getBoundingClientRect();
-    return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
-  })()`);
-  if (!firstCornerCenter) throw new Error("Poignée de coin introuvable.");
-  await cdp.send("Input.dispatchMouseEvent", {
-    type: "mousePressed",
-    x: firstCornerCenter.x,
-    y: firstCornerCenter.y,
-    button: "left",
-    buttons: 1,
-    clickCount: 1,
-  });
-  await cdp.send("Input.dispatchMouseEvent", {
-    type: "mouseMoved",
-    x: firstCornerCenter.x + 12,
-    y: firstCornerCenter.y + 10,
-    button: "left",
-    buttons: 1,
-  });
-  await new Promise((resolve) => setTimeout(resolve, 120));
-  const magnifierVisibleDuringDrag = await evaluate(
-    `document.querySelector('button[aria-label="Déplacer coin haut gauche"]')?.parentElement?.querySelector(".size-24") !== null`,
-  );
-  const adjustmentScreenshot = await cdp.send("Page.captureScreenshot", {
+  const quickScanScreenshot = await cdp.send("Page.captureScreenshot", {
     format: "png",
     fromSurface: true,
   });
-  await cdp.send("Input.dispatchMouseEvent", {
-    type: "mouseReleased",
-    x: firstCornerCenter.x + 12,
-    y: firstCornerCenter.y + 10,
-    button: "left",
-    buttons: 0,
-    clickCount: 1,
-  });
-  const adjustmentScreenshotPath = join(
+  const quickScanScreenshotPath = join(
     artifactDirectory,
-    "page-adjustment.png",
+    "quick-scan-preview.png",
   );
   await writeFile(
-    adjustmentScreenshotPath,
-    Buffer.from(adjustmentScreenshot.data, "base64"),
+    quickScanScreenshotPath,
+    Buffer.from(quickScanScreenshot.data, "base64"),
   );
-  await evaluate(`(() => {
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.includes("Tourner à gauche")
-    );
-    button?.click();
-    return Boolean(button);
-  })()`);
-  await waitFor(
-    `document.querySelector('img[alt="Page à recadrer"]') !== null && document.body.innerText.includes("Ajuster la page")`,
-    "La rotation de la page n’a pas abouti.",
-    120,
-  );
-  console.log("[smoke] rotation gauche terminée");
-  await evaluate(`(() => {
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.includes("Tourner à droite")
-    );
-    button?.click();
-    return Boolean(button);
-  })()`);
-  await waitFor(
-    `document.querySelector('img[alt="Page à recadrer"]') !== null && document.body.innerText.includes("Ajuster la page")`,
-    "La seconde rotation de la page n’a pas abouti.",
-    120,
-  );
-  console.log("[smoke] rotation droite terminée");
-  await evaluate(`(() => {
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.trim() === "Redresser la page"
-    );
-    if (!button || button.disabled) throw new Error("Redressement introuvable");
-    button.click();
-    return true;
-  })()`);
-  await new Promise((resolve) => setTimeout(resolve, 5_000));
-  console.log(
-    "[smoke] état perspective:",
-    await evaluate(`({
-      preview: document.body.innerText.includes("Comparer avant et après"),
-      processing: document.body.innerText.includes("Redressement de la page"),
-      adjustment: document.body.innerText.includes("Ajuster la page"),
-      alerts: Array.from(document.querySelectorAll('[role="alert"]')).map(
-        (element) => element.textContent.trim()
-      )
-    })`),
-  );
-  await waitFor(
-    `document.body.innerText.includes("Comparer avant et après") && document.querySelector('img[alt="Page redressée"]') !== null`,
-    "La correction de perspective n’a pas produit d’aperçu.",
-    400,
-  );
-  console.log("[smoke] perspective calculée");
-  const perspectivePreviewWorks = true;
-  await evaluate(`(() => {
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.trim() === "Contraste renforcé"
-    );
-    if (!button) throw new Error("Mode contraste introuvable");
-    button.click();
-    return true;
-  })()`);
-  await waitFor(
-    `document.body.innerText.includes("Comparer avant et après") && Array.from(document.querySelectorAll("button")).some((button) => button.getAttribute("aria-pressed") === "true" && button.textContent.includes("Contraste renforcé"))`,
-    "Le contraste renforcé n’a pas été préparé.",
-    400,
-  );
-  await evaluate(`(() => {
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.trim() === "Utiliser la page redressée"
-    );
-    button?.click();
-    return Boolean(button);
-  })()`);
-  await waitFor(
-    `Array.from(document.querySelectorAll("button")).some((button) => button.textContent.includes("Lancer la reconnaissance"))`,
-    "La page redressée n’a pas rejoint la préparation OCR.",
-    120,
-  );
-  const languageChoices = await evaluate(
-    `Array.from(document.querySelector("#ocr-language")?.options ?? []).map((option) => option.value)`,
-  );
-  await setControlValue("#ocr-language", "eng", "select");
-  await setControlValue("#ocr-language", "fra", "select");
   const photoPreparationRequests = networkRequests.slice(requestsBeforePhoto);
   await evaluate(`(() => {
     const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.includes("Lancer la reconnaissance IA")
+      (candidate) => candidate.textContent.trim() === "Envoyer"
     );
-    if (!button) throw new Error("Lancement de la reconnaissance IA introuvable");
+    if (!button || button.disabled) throw new Error("Envoi du scan introuvable");
     button.click();
     return true;
   })()`);
@@ -794,28 +648,11 @@ try {
     return true;
   })()`);
   await waitFor(
-    `document.querySelector("#ocr-review-text")?.value.includes("Les mythes organisent les sociétés.")`,
-    "La sélection du texte IA n’a pas alimenté la vérification.",
+    `document.querySelector("#extracted-text")?.value === "Les mythes organisent les sociétés." && document.body.innerText.includes("Passage extrait depuis une photo")`,
+    "La sélection du texte IA n’a pas rejoint directement le formulaire.",
   );
   const aiTextSelectionWorks = true;
   const aiCorrectionWorks = true;
-  await setControlValue(
-    "#ocr-review-text",
-    "Les mythes organisent les sociétés.",
-    "textarea",
-  );
-  await evaluate(`(() => {
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.trim() === "Ajouter à ma note"
-    );
-    if (!button) throw new Error("Ajout à la note introuvable");
-    button.click();
-    return true;
-  })()`);
-  await waitFor(
-    `document.querySelector("#extracted-text")?.value === "Les mythes organisent les sociétés." && document.body.innerText.includes("Passage extrait depuis une photo")`,
-    "Le passage reconnu par l’IA n’a pas rejoint le formulaire existant.",
-  );
   await new Promise((resolve) => setTimeout(resolve, 500));
   const workerTargetsAfterTransfer = (
     await (
@@ -853,22 +690,11 @@ try {
   );
   const oneNoteCounts = await readDatabaseCounts();
   const scannedNote = await readLatestNote();
-  const openCvAssetCached = await evaluate(`(async () =>
-    Boolean(await caches.match("/vendor/opencv/4.13.0/opencv.js"))
-  )()`);
+  const opencvRequestsAfterPhoto = networkRequests.filter((request) =>
+    request.url.includes("/vendor/opencv/4.13.0/opencv.js"),
+  );
   await navigate(
     `http://127.0.0.1:3000/books/${notesBookId}/notes/new`,
-  );
-  await evaluate(`(() => {
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.includes("Scanner une page")
-    );
-    button?.click();
-    return Boolean(button);
-  })()`);
-  await waitFor(
-    `document.querySelector("#scan-library-image") !== null`,
-    "Le second scan de contrôle ne s’est pas ouvert.",
   );
   await cdp.send("Network.emulateNetworkConditions", {
     offline: true,
@@ -895,7 +721,7 @@ try {
     transfer.items.add(
       new File([blob], "offline-ocr.png", { type: "image/png" })
     );
-    const input = document.querySelector("#scan-library-image");
+    const input = document.querySelector("#scan-camera-image");
     Object.defineProperty(input, "files", {
       configurable: true,
       value: transfer.files
@@ -904,35 +730,13 @@ try {
     return true;
   })()`);
   await waitFor(
-    `document.body.innerText.includes("Ajuster la page") && document.querySelector('img[alt="Page à recadrer"]') !== null`,
-    "La photo du contrôle hors ligne n’a pas atteint l’ajustement.",
-    300,
-  );
-  await waitFor(
-    `!document.body.innerText.includes("Recherche approximative des bords")`,
-    "OpenCV n’a pas terminé son contrôle hors ligne.",
-    400,
-  );
-  const offlineOpenCvReuse = !(
-    await evaluate(
-      `document.body.innerText.includes("doit être chargé une première fois avec une connexion")`,
-    )
+    `document.body.innerText.includes("Votre photo est prête")`,
+    "La photo du contrôle hors ligne n’a pas atteint l’aperçu.",
+    120,
   );
   await evaluate(`(() => {
     const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.trim() === "Continuer sans redresser"
-    );
-    button?.click();
-    return Boolean(button);
-  })()`);
-  await waitFor(
-    `Array.from(document.querySelectorAll("button")).some((button) => button.textContent.includes("Lancer la reconnaissance"))`,
-    "Le secours sans redressement n’a pas préparé la page hors ligne.",
-    200,
-  );
-  await evaluate(`(() => {
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.includes("Lancer la reconnaissance IA")
+      (candidate) => candidate.textContent.trim() === "Envoyer"
     );
     button?.click();
     return Boolean(button);
@@ -1135,18 +939,10 @@ try {
       placeholderCounts.books === 1 && placeholderCounts.images === 0,
     scannerEnabled,
     cameraCaptureConfigured,
-    fallbackCornersVisibleImmediately,
-    automaticDetectionCompleted,
-    magnifierVisibleDuringDrag,
-    perspectivePreviewWorks,
-    lazyOpenCv:
+    quickPreviewOnlySend,
+    openCvNeverLoaded:
       opencvRequestsBeforeActivation.length === 0 &&
-      opencvRequestsAfterPhoto.length === 1,
-    openCvAssetCached,
-    offlineOpenCvReuse,
-    languageChoices:
-      JSON.stringify(languageChoices) ===
-      JSON.stringify(["fra", "eng", "pol"]),
+      opencvRequestsAfterPhoto.length === 0,
     tesseractRemoved: legacyTesseractChunkFileNames.length === 0,
     localPhotoPreparation:
       externalRequestsDuringPhotoPreparation.length === 0,
@@ -1183,7 +979,7 @@ try {
     detailScreenshot: detailScreenshotPath,
     noteDetailScreenshot: noteDetailScreenshotPath,
     aiSelectionScreenshot: ocrScreenshotPath,
-    adjustmentScreenshot: adjustmentScreenshotPath,
+    quickScanScreenshot: quickScanScreenshotPath,
     ideasScreenshot: ideasScreenshotPath,
   };
 

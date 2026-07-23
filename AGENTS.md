@@ -8,16 +8,11 @@
 - Conserver les Blobs dans `images` et effectuer les changements livre/couverture dans une transaction unique.
 - Effectuer la suppression d’un livre, de ses notes et de leurs images dans une seule transaction afin de ne jamais laisser de donnée orpheline.
 - Faire alimenter au futur scanner le même brouillon et le même repository que la saisie manuelle, sans dupliquer le formulaire ni le modèle.
-- La détection et le redressement restent côté client ; seule une action explicite « Reconnaissance IA » peut envoyer la page préparée à la route serveur OpenAI.
+- Le scan rapide ouvre directement l’appareil photo depuis le formulaire, puis présente seulement l’aperçu et l’action explicite « Envoyer » avant la route serveur OpenAI.
 - Conserver `OPENAI_API_KEY` exclusivement côté serveur, sans préfixe `NEXT_PUBLIC_`, et ne jamais l’écrire dans les logs.
 - Toute requête OpenAI de reconnaissance doit utiliser `store: false`, une réponse `no-store`, des limites de taille et une protection raisonnable contre les abus.
-- La détection automatique des bords reste une proposition : elle ne remplace jamais le réglage manuel des quatre coins.
-- Conserver les coordonnées de recadrage normalisées et indépendantes de la taille d’affichage, de détection ou d’OCR.
-- Libérer explicitement chaque `cv.Mat` et toute autre ressource OpenCV native dès la fin de son usage.
-- Charger OpenCV uniquement dans le parcours scanner, à la demande et dans son worker dédié.
-- Un échec de chargement, de détection ou de redressement OpenCV ne doit jamais empêcher la saisie ou l’enregistrement d’une note.
 - Ne jamais transmettre l’image d’une page en dehors du déclenchement explicite de la reconnaissance IA, et ne jamais la persister dans BrainBook.
-- Ne pas promettre un redressement parfait des pages incurvées : toujours conserver la correction manuelle et la sélection textuelle de secours.
+- Ne pas réintroduire de recadrage, redressement ou réglage préalable dans le parcours rapide sans une demande produit explicite.
 - Charger côté client, et uniquement au moment du besoin, les bibliothèques qui utilisent les API du navigateur.
 - Toute modification du moteur OCR doit préserver la sélection textuelle accessible de secours.
 - Prioriser la stabilité, la mémoire et les performances de Safari sur iPhone pour tout traitement OCR.

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type {
   Book,
@@ -54,6 +54,8 @@ const fieldClassName =
 export function NoteForm({ mode, book, note }: NoteFormProps) {
   const router = useRouter();
   const [entryMode, setEntryMode] = useState<"manual" | "scan">("manual");
+  const [scanFile, setScanFile] = useState<File | null>(null);
+  const [scanSession, setScanSession] = useState(0);
   const [sourceType, setSourceType] = useState<NoteSourceType>(
     note?.sourceType ?? "manual",
   );
@@ -68,6 +70,23 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
   const [tagError, setTagError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  const openCamera = () => {
+    cameraInputRef.current?.click();
+  };
+
+  const handleCameraSelection = (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+
+    setScanFile(file);
+    setScanSession((current) => current + 1);
+    setEntryMode("scan");
+  };
 
   const updateTextField = (
     field: "extractedText" | "personalReflection" | "pageNumber",
@@ -176,63 +195,69 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
           }
           label={mode === "edit" ? "Retour à la note" : "Fiche du livre"}
         />
-        <p className="mt-5 text-[0.7rem] font-bold tracking-[0.16em] text-[var(--clay)] uppercase">
-          Carnet de lecture
-        </p>
-        <h1 className="mt-2 text-[2rem] leading-tight font-semibold tracking-[-0.04em]">
-          {mode === "create" ? "Ajouter une note" : "Modifier la note"}
-        </h1>
+        {mode === "edit" || entryMode === "manual" ? (
+          <>
+            <p className="mt-5 text-[0.7rem] font-bold tracking-[0.16em] text-[var(--clay)] uppercase">
+              Carnet de lecture
+            </p>
+            <h1 className="mt-2 text-[2rem] leading-tight font-semibold tracking-[-0.04em]">
+              {mode === "create" ? "Ajouter une note" : "Modifier la note"}
+            </h1>
+          </>
+        ) : null}
       </header>
 
-      <section className="mt-6 flex items-center gap-4 rounded-3xl border border-[var(--line)] bg-[var(--card)] p-3">
-        <BookCover
-          book={book}
-          className="aspect-[2/3] w-14 shrink-0 rounded-xl shadow-sm"
-        />
-        <div className="min-w-0">
-          <p className="truncate font-semibold">{book.title}</p>
-          <p className="mt-1 truncate text-sm text-[var(--muted)]">
-            {book.author}
-          </p>
-        </div>
-      </section>
+      {mode === "edit" || entryMode === "manual" ? (
+        <section className="mt-6 flex items-center gap-4 rounded-3xl border border-[var(--line)] bg-[var(--card)] p-3">
+          <BookCover
+            book={book}
+            className="aspect-[2/3] w-14 shrink-0 rounded-xl shadow-sm"
+          />
+          <div className="min-w-0">
+            <p className="truncate font-semibold">{book.title}</p>
+            <p className="mt-1 truncate text-sm text-[var(--muted)]">
+              {book.author}
+            </p>
+          </div>
+        </section>
+      ) : null}
 
-      {mode === "create" ? (
-        <section aria-label="Mode d’ajout" className="mt-6 grid grid-cols-2 gap-3">
+      {mode === "create" && entryMode === "manual" ? (
+        <section aria-label="Scan rapide" className="mt-6">
+          <input
+            ref={cameraInputRef}
+            id="scan-camera-image"
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handleCameraSelection}
+            className="sr-only"
+          />
           <button
             type="button"
-            aria-pressed={entryMode === "manual"}
-            onClick={() => setEntryMode("manual")}
-            className={`flex min-h-16 flex-col items-center justify-center gap-1.5 rounded-2xl border px-3 py-3 text-xs font-semibold ${
-              entryMode === "manual"
-                ? "border-[var(--moss)] bg-[var(--moss-soft)] text-[var(--moss)]"
-                : "border-[var(--line)] bg-[var(--card)] text-[var(--muted)]"
-            }`}
+            onClick={openCamera}
+            className="flex min-h-16 w-full items-center gap-3 rounded-2xl bg-[var(--moss)] px-5 py-3 text-left text-white shadow-[0_8px_20px_rgb(49_95_77_/_0.16)]"
           >
-            <Icon name="edit" size={20} />
-            Saisir manuellement
-          </button>
-          <button
-            type="button"
-            aria-pressed={entryMode === "scan"}
-            onClick={() => setEntryMode("scan")}
-            className={`flex min-h-16 flex-col items-center justify-center gap-1 rounded-2xl border px-3 py-2 text-xs font-semibold ${
-              entryMode === "scan"
-                ? "border-[var(--moss)] bg-[var(--moss-soft)] text-[var(--moss)]"
-                : "border-[var(--line)] bg-[var(--card)] text-[var(--muted)]"
-            }`}
-          >
-            <Icon name="camera" size={19} />
-            Scanner une page
-            <span className="text-[0.58rem] font-normal">Reconnaissance IA</span>
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-white/15">
+              <Icon name="camera" size={21} />
+            </span>
+            <span>
+              <span className="block text-sm font-semibold">
+                Scanner une page
+              </span>
+              <span className="mt-0.5 block text-xs text-white/75">
+                Ouvre directement l’appareil photo
+              </span>
+            </span>
           </button>
         </section>
       ) : null}
 
-      {mode === "create" && entryMode === "scan" ? (
+      {mode === "create" && entryMode === "scan" && scanFile ? (
         <ScanFlow
+          key={scanSession}
+          file={scanFile}
           onPassageReady={handleScannedPassage}
-          onExitToManual={() => setEntryMode("manual")}
         />
       ) : (
       <form onSubmit={handleSubmit} noValidate className="mt-7 space-y-6">
@@ -250,7 +275,7 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
             {mode === "create" ? (
               <button
                 type="button"
-                onClick={() => setEntryMode("scan")}
+                onClick={openCamera}
                 className="mt-2 min-h-11 text-xs font-semibold text-[var(--moss)]"
               >
                 Recommencer le scan ou remplacer ce passage

@@ -54,26 +54,22 @@ describe("NoteForm scan mode", () => {
     replace.mockReset();
   });
 
-  it("affiche et active les deux modes sans ouvrir automatiquement la caméra", () => {
-    expect(buttonWithText("Saisir manuellement")).toBeTruthy();
-    expect(buttonWithText("Scanner une page")).toBeTruthy();
-    expect(document.querySelector("#scan-camera-image")).toBeNull();
-
-    act(() => buttonWithText("Scanner une page").click());
-
+  it("propose un bouton qui déclenche directement l’appareil photo", () => {
     const cameraInput = document.querySelector("#scan-camera-image");
-    const libraryInput = document.querySelector("#scan-library-image");
     expect(cameraInput).toBeInstanceOf(HTMLInputElement);
     expect(cameraInput?.getAttribute("accept")).toBe("image/*");
     expect(cameraInput?.getAttribute("capture")).toBe("environment");
-    expect(libraryInput).toBeInstanceOf(HTMLInputElement);
-    expect(libraryInput?.hasAttribute("capture")).toBe(false);
+    const openCamera = vi.spyOn(cameraInput as HTMLInputElement, "click");
+
+    act(() => buttonWithText("Scanner une page").click());
+
+    expect(openCamera).toHaveBeenCalledOnce();
     expect(document.body.textContent).toContain(
-      "la page préparée est envoyée temporairement à OpenAI",
+      "Ouvre directement l’appareil photo",
     );
   });
 
-  it("conserve la réflexion lors d’un aller-retour vers le scanner", () => {
+  it("conserve la réflexion si l’utilisateur referme l’appareil photo", () => {
     const reflection = document.querySelector("#personal-reflection");
     expect(reflection).toBeInstanceOf(HTMLTextAreaElement);
 
@@ -87,7 +83,6 @@ describe("NoteForm scan mode", () => {
     });
 
     act(() => buttonWithText("Scanner une page").click());
-    act(() => buttonWithText("Saisir manuellement").click());
 
     expect(
       (document.querySelector("#personal-reflection") as HTMLTextAreaElement)
@@ -95,9 +90,8 @@ describe("NoteForm scan mode", () => {
     ).toBe("Réflexion à conserver");
   });
 
-  it("explique un fichier invalide et permet de choisir une autre image", async () => {
-    act(() => buttonWithText("Scanner une page").click());
-    const input = document.querySelector("#scan-library-image");
+  it("explique un fichier invalide au moment de l’envoi", async () => {
+    const input = document.querySelector("#scan-camera-image");
     expect(input).toBeInstanceOf(HTMLInputElement);
     const file = new File(["pas une image"], "document.txt", {
       type: "text/plain",
@@ -116,10 +110,17 @@ describe("NoteForm scan mode", () => {
       await Promise.resolve();
     });
 
+    expect(document.body.textContent).toContain("Votre photo est prête");
+
+    await act(async () => {
+      buttonWithText("Envoyer").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
     expect(document.body.textContent).toContain(
       "Le fichier choisi n’est pas une image reconnue",
     );
-    expect(document.querySelector("#scan-library-image")).toBeTruthy();
-    expect(document.querySelector("#scan-camera-image")).toBeTruthy();
+    expect(buttonWithText("Envoyer")).toBeTruthy();
   });
 });
