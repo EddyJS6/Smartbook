@@ -16,6 +16,10 @@ const mocks = vi.hoisted(() => ({
   signOut: vi.fn(async () => ({ error: null })),
   authCallback: null as null | ((event: string, session: unknown) => void),
   cancelCurrentSync: vi.fn(),
+  initializeAccount: vi.fn(async () => ({
+    status: "ready",
+    action: "alreadyReady",
+  })),
 }));
 
 vi.mock("@/lib/supabase/client", () => ({
@@ -43,11 +47,14 @@ vi.mock("@/lib/supabase/client", () => ({
 vi.mock("@/sync/sync-service", () => ({
   syncService: {
     cancelCurrentSync: mocks.cancelCurrentSync,
+    initializeAccount: mocks.initializeAccount,
     getSyncStatus: vi.fn(async () => ({
       firstSyncCompleted: false,
       associatedUserId: null,
     })),
     runFullSync: vi.fn(),
+    mergeLibraries: vi.fn(),
+    clearLocalDataForNewAccount: vi.fn(),
   },
 }));
 
@@ -57,6 +64,7 @@ function Probe() {
     <div>
       <span id="status">{auth.status}</span>
       <span id="email">{auth.email}</span>
+      <span id="account-status">{auth.accountStatus}</span>
       <button
         type="button"
         onClick={() => void auth.signIn("eddy@example.com", "secret")}
@@ -113,6 +121,9 @@ describe("CloudAuthProvider", () => {
     expect(document.querySelector("#status")?.textContent).toBe("connected");
     expect(document.querySelector("#email")?.textContent).toBe(
       "eddy@example.com",
+    );
+    expect(mocks.initializeAccount).toHaveBeenCalledWith(
+      "90000000-0000-4000-8000-000000000000",
     );
   });
 

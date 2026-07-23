@@ -23,7 +23,8 @@ temporairement la page préparée à l’API OpenAI. La clé OpenAI ne doit jama
    `gpt-5.4-mini-2026-03-17`.
 5. Redéployer la dernière version depuis l’onglet **Deployments**.
 
-Pour activer la sauvegarde privée, ajouter également :
+Pour activer le compte BrainBook et retrouver les données sur plusieurs
+appareils, ajouter également :
 
 - `NEXT_PUBLIC_SUPABASE_URL` ;
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`.

@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { CloudBackupSettings } from "@/components/cloud/cloud-backup-settings";
+import { AccountSettings } from "@/components/cloud/account-settings";
 
 export const metadata: Metadata = {
-  title: "Réglages",
+  title: "Mon compte",
 };
 
 export default function SettingsPage() {
@@ -13,13 +13,13 @@ export default function SettingsPage() {
           Votre espace
         </p>
         <h1 className="mt-2 text-[2rem] leading-tight font-semibold tracking-[-0.04em]">
-          Réglages
+          Mon compte
         </h1>
         <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-          Gérez la sauvegarde privée de votre bibliothèque.
+          Connectez-vous pour retrouver votre bibliothèque partout.
         </p>
       </header>
-      <CloudBackupSettings />
+      <AccountSettings />
     </div>
   );
 }

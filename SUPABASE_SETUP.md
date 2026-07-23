@@ -103,20 +103,22 @@ Ces deux valeurs sont publiques par conception. La confidentialité dépend de
 la session et de RLS. Ne jamais ajouter `SUPABASE_SERVICE_ROLE_KEY` au projet
 client.
 
-## 6. Première sauvegarde
+## 6. Première connexion
 
-1. Ouvrir BrainBook puis **Réglages**.
-2. Appuyer sur **Activer la sauvegarde**.
-3. Se connecter avec l’utilisateur créé dans le tableau de bord.
-4. Choisir l’action proposée :
-   - cloud vide : **Sauvegarder les données de cet appareil** ;
-   - appareil vide : **Restaurer ma bibliothèque** ;
-   - deux bibliothèques remplies : fusion, appareil ou cloud.
+1. Ouvrir BrainBook puis **Compte**.
+2. Saisir l’email et le mot de passe de l’utilisateur créé dans le tableau de
+   bord.
+3. BrainBook initialise automatiquement le compte :
+   - compte vide : les données de l’appareil sont ajoutées au compte ;
+   - appareil vide : la bibliothèque du compte est téléchargée ;
+   - les deux sont vides : le compte est immédiatement prêt.
+4. Si l’appareil et le compte contiennent déjà des données distinctes, appuyer
+   sur **Rassembler avec mon compte**. Cette fusion est non destructive.
 5. Vérifier l’état **À jour** et les nombres dans Table Editor.
 
-Une restauration locale non vide demande confirmation et crée d’abord une
-sauvegarde structurée des livres et notes. Cette sauvegarde de sécurité ne
-duplique pas encore les fichiers binaires de couverture.
+Un changement de compte demande confirmation et crée d’abord une sauvegarde
+structurée des livres et notes de l’ancien compte. Cette sauvegarde de sécurité
+ne duplique pas encore les fichiers binaires de couverture.
 
 ## 7. Tester RLS avec deux utilisateurs
 
@@ -148,7 +150,7 @@ et invaliderait le test.
 2. Dans un profil Safari ou navigateur séparé, ouvrir BrainBook avec IndexedDB
    vide.
 3. Se connecter au même compte.
-4. Choisir **Restaurer ma bibliothèque**.
+4. Attendre l’état **À jour** : la bibliothèque est chargée automatiquement.
 5. Vérifier livres, notes, tags et couvertures.
 6. Vérifier qu’une note scannée ne contient que son texte final et qu’aucune
    photographie de page n’existe dans Storage.

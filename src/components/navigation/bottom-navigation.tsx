@@ -11,7 +11,7 @@ const navigationItems: ReadonlyArray<{
 }> = [
   { href: "/", label: "Bibliothèque", icon: "library" },
   { href: "/ideas", label: "Idées", icon: "spark" },
-  { href: "/settings", label: "Réglages", icon: "settings" },
+  { href: "/settings", label: "Compte", icon: "settings" },
 ];
 
 export function BottomNavigation() {

@@ -3,10 +3,10 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { AccountSettings } from "@/components/cloud/account-settings";
 import { CloudAuthProvider } from "@/components/cloud/cloud-auth-provider";
-import { CloudBackupSettings } from "@/components/cloud/cloud-backup-settings";
 
-describe("CloudBackupSettings without configuration", () => {
+describe("AccountSettings without configuration", () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -26,21 +26,19 @@ describe("CloudBackupSettings without configuration", () => {
     container.remove();
   });
 
-  it("reste non bloquant et n’affiche aucune inscription publique", () => {
+  it("reste non bloquant et présente le compte sans jargon cloud", () => {
     act(() =>
       root.render(
         <CloudAuthProvider>
-          <CloudBackupSettings />
+          <AccountSettings />
         </CloudAuthProvider>,
       ),
     );
 
+    expect(document.body.textContent).toContain("Connexion indisponible");
     expect(document.body.textContent).toContain(
-      "Sauvegarde cloud indisponible",
+      "Les données de cet appareil restent accessibles",
     );
-    expect(document.body.textContent).toContain(
-      "continue de fonctionner normalement",
-    );
-    expect(document.body.textContent).not.toContain("Créer un compte");
+    expect(document.body.textContent).not.toContain("Sauvegarde cloud");
   });
 });

@@ -46,6 +46,7 @@ import {
 } from "@/sync/queue";
 import { determineInitialSyncCase } from "@/sync/initial-sync";
 import type {
+  AccountInitializationResult,
   InitialSyncInspection,
   LocalSafetyBackup,
   RemoteBookRow,
@@ -336,6 +337,35 @@ export class SyncService {
       remoteLastUpdatedAt: latest,
       associatedUserId: metadata.associatedUserId,
     };
+  }
+
+  async initializeAccount(
+    userId: UUID,
+  ): Promise<AccountInitializationResult> {
+    const metadata = await getOrCreateSyncMetadata(this.database);
+    if (
+      metadata.firstSyncCompleted &&
+      metadata.associatedUserId === userId
+    ) {
+      return { status: "ready", action: "alreadyReady" };
+    }
+
+    const inspection = await this.inspectInitialSync(userId);
+    switch (inspection.kind) {
+      case "accountMismatch":
+        return { status: "accountMismatch", inspection };
+      case "bothFilled":
+        return { status: "needsMerge", inspection };
+      case "bothEmpty":
+        await this.enableEmptyBackup(userId);
+        return { status: "ready", action: "enabled" };
+      case "localOnly":
+        await this.backupLocalData(userId);
+        return { status: "ready", action: "uploaded" };
+      case "cloudOnly":
+        await this.restoreFromCloud(userId, true);
+        return { status: "ready", action: "downloaded" };
+    }
   }
 
   private async seedFullBackupQueue(timestamp = new Date().toISOString()) {

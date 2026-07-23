@@ -86,6 +86,16 @@ export type InitialSyncInspection = {
   associatedUserId: UUID | null;
 };
 
+export type AccountInitializationResult =
+  | {
+      status: "ready";
+      action: "alreadyReady" | "enabled" | "uploaded" | "downloaded";
+    }
+  | {
+      status: "needsMerge" | "accountMismatch";
+      inspection: InitialSyncInspection;
+    };
+
 export type SyncStatus = {
   configured: boolean;
   online: boolean;

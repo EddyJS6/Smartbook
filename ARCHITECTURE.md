@@ -113,10 +113,13 @@ La couverture source est limitée à 15 Mo et à 40 mégapixels pour protéger l
 
 L’affichage récupère le Blob seulement lorsque nécessaire, crée une Object URL, puis la révoque au démontage ou au changement de couverture. Sans image, un placeholder déterministe est généré visuellement à partir du titre et de l’auteur, sans persistance supplémentaire.
 
-## Sauvegarde Supabase
+## Compte utilisateur et synchronisation Supabase
 
-Supabase est une sauvegarde distante facultative. IndexedDB reste disponible
-sans compte, sans réseau et lorsque Supabase échoue. Les mutations des
+Supabase relie les livres et les notes au compte utilisateur afin de les
+retrouver sur plusieurs appareils. L’interface présente ce fonctionnement
+comme un compte BrainBook ; elle n’expose pas les commandes techniques de
+sauvegarde et de restauration. IndexedDB reste disponible sans compte, sans
+réseau et lorsque Supabase échoue. Les mutations des
 repositories enregistrent d’abord les données métier et l’opération Outbox dans
 une seule transaction Dexie. L’appel réseau se produit seulement après le
 commit ; il ne peut donc pas annuler une mutation locale.
@@ -136,11 +139,17 @@ Le compte personnel est créé dans le tableau de bord Supabase. Le client activ
 l’URL et écoute `onAuthStateChange`. La PWA ne demande donc pas une nouvelle
 connexion à chaque ouverture normale.
 
+Après restauration de la session ou connexion, le provider initialise
+automatiquement les données du compte. Un appareil vide télécharge la
+bibliothèque du compte ; un compte vide reçoit les données locales ; si les
+deux sont vides, l’association est immédiate. Le chargement ne dépend donc pas
+de l’ouverture de l’écran Compte.
+
 La déconnexion invalide la session locale et annule logiquement la génération
 de synchronisation en cours, sans effacer IndexedDB. Si un autre utilisateur se
 connecte, `associatedUserId` bloque tout push automatique. L’utilisateur doit
-reconnecter l’ancien compte, rester en local, ou confirmer l’effacement local
-après création d’une sauvegarde structurée.
+reconnecter l’ancien compte ou confirmer le retrait local des données de
+l’ancien compte. Une sauvegarde structurée est créée avant ce retrait.
 
 ### Schéma distant et RLS
 
@@ -198,13 +207,12 @@ réalimenter l’Outbox.
 
 ### Première synchronisation et restauration
 
-Les quatre cas local/cloud sont toujours inspectés avant activation :
+Les quatre cas local/distant sont toujours inspectés après connexion :
 
-- local rempli, cloud vide : sauvegarde complète de l’appareil ;
-- local vide, cloud rempli : restauration ;
-- tous deux vides : activation immédiate ;
-- tous deux remplis : choix explicite entre fusion, conservation de l’appareil
-  et restauration cloud.
+- local rempli, compte vide : envoi automatique de l’appareil ;
+- local vide, compte rempli : téléchargement automatique ;
+- tous deux vides : association immédiate ;
+- tous deux remplis : proposition explicite d’une fusion non destructive.
 
 Une restauration télécharge et valide les données avant de remplacer
 atomiquement les tables métier. Une sauvegarde structurée locale est créée
@@ -220,15 +228,15 @@ collaborative.
 
 ### Déclencheurs iPhone
 
-Après activation, une synchronisation est tentée au lancement, après une
-mutation enregistrée (debounce), au retour en ligne, au retour au premier plan
-et sur action manuelle. Le fonctionnement ne dépend pas de Background Sync :
-Safari peut suspendre rapidement une PWA en arrière-plan.
+Après connexion, une synchronisation est tentée au lancement, après une
+mutation enregistrée (debounce), au retour en ligne et au retour au premier
+plan. Une action « Réessayer » est affichée seulement en cas d’erreur. Le
+fonctionnement ne dépend pas de Background Sync : Safari peut suspendre
+rapidement une PWA en arrière-plan.
 
-La section Réglages distingue « À jour », « Modifications en attente »,
-« Synchronisation en cours », « Hors ligne », « Erreur de sauvegarde » et
-« Connexion requise ». Elle ne promet jamais « À jour » tant que la queue
-contient une opération en attente ou en erreur.
+La section Compte distingue « À jour », « Mise à jour », « Hors ligne »,
+« Action requise » et « À vérifier ». Elle ne promet jamais « À jour » tant que
+la queue contient une opération en attente ou en erreur.
 
 ## Reconnaissance IA et parcours scanner
 

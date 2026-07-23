@@ -139,6 +139,103 @@ describe("SyncService integration", () => {
     await database.delete();
   });
 
+  it("initialise automatiquement un compte vide", async () => {
+    const fake = createFakeSupabase();
+    const service = new SyncService(database, () => fake.client, () => true);
+
+    await expect(service.initializeAccount(userId)).resolves.toEqual({
+      status: "ready",
+      action: "enabled",
+    });
+    expect(await database.syncMetadata.get("primary")).toMatchObject({
+      associatedUserId: userId,
+      firstSyncCompleted: true,
+    });
+  });
+
+  it("envoie automatiquement les données locales vers un compte vide", async () => {
+    const fake = createFakeSupabase();
+    const service = new SyncService(database, () => fake.client, () => true);
+    const books = new BookRepository(database);
+    await books.create({
+      title: "Livre local",
+      author: "Auteur local",
+      status: "reading",
+    });
+
+    await expect(service.initializeAccount(userId)).resolves.toEqual({
+      status: "ready",
+      action: "uploaded",
+    });
+    expect(fake.tables.books).toHaveLength(1);
+  });
+
+  it("charge automatiquement le compte sur un appareil vide", async () => {
+    const now = "2026-07-23T12:00:00.000Z";
+    const fake = createFakeSupabase({
+      books: [
+        {
+          user_id: userId,
+          id: "40000000-0000-4000-8000-000000000000",
+          title: "Livre du compte",
+          author: "Autrice distante",
+          status: "finished",
+          cover_storage_path: null,
+          created_at: now,
+          updated_at: now,
+          deleted_at: null,
+          server_updated_at: now,
+        },
+      ],
+    });
+    const service = new SyncService(database, () => fake.client, () => true);
+
+    await expect(service.initializeAccount(userId)).resolves.toEqual({
+      status: "ready",
+      action: "downloaded",
+    });
+    expect(await database.books.toArray()).toMatchObject([
+      { title: "Livre du compte" },
+    ]);
+  });
+
+  it("demande une action explicite avant de réunir deux bibliothèques", async () => {
+    const now = "2026-07-23T12:00:00.000Z";
+    const fake = createFakeSupabase({
+      books: [
+        {
+          user_id: userId,
+          id: "40000000-0000-4000-8000-000000000000",
+          title: "Livre distant",
+          author: "Autrice distante",
+          status: "finished",
+          cover_storage_path: null,
+          created_at: now,
+          updated_at: now,
+          deleted_at: null,
+          server_updated_at: now,
+        },
+      ],
+    });
+    const service = new SyncService(database, () => fake.client, () => true);
+    const books = new BookRepository(database);
+    await books.create({
+      title: "Livre local",
+      author: "Auteur local",
+      status: "reading",
+    });
+
+    await expect(service.initializeAccount(userId)).resolves.toMatchObject({
+      status: "needsMerge",
+      inspection: {
+        kind: "bothFilled",
+        localBooks: 1,
+        remoteBooks: 1,
+      },
+    });
+    expect(fake.tables.books).toHaveLength(1);
+  });
+
   it("sauvegarde livres, notes et Blob de couverture puis nettoie l’Outbox", async () => {
     const fake = createFakeSupabase();
     const service = new SyncService(database, () => fake.client, () => true);
