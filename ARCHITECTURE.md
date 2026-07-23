@@ -63,6 +63,11 @@ Index : clé unique `id`, puis `bookId`, `createdAt` et `updatedAt`. Les tags re
 
 Une note est valide si elle contient au moins un passage ou une réflexion. Les deux champs peuvent coexister. Le nombre de notes est toujours calculé depuis `bookNotes` et n’est jamais dupliqué dans `Book`.
 
+Le formulaire permet de créer un tag personnalisé ou de choisir une suggestion.
+Les tags personnalisés récemment utilisés sont dérivés des notes existantes et
+reproposés sans nouvelle table. Sur mobile, toutes les suggestions passent
+automatiquement à la ligne ; aucun carrousel horizontal n’est utilisé.
+
 ### Tables techniques — ajoutées en version 3
 
 `syncQueue` est une Outbox locale. Sa clé stable

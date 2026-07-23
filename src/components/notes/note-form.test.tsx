@@ -90,6 +90,42 @@ describe("NoteForm scan mode", () => {
     ).toBe("Réflexion à conserver");
   });
 
+  it("permet de créer et sélectionner un tag personnalisé", () => {
+    const tagInput = document.querySelector("#tag-input");
+    expect(tagInput).toBeInstanceOf(HTMLInputElement);
+
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(tagInput, "Projet personnel");
+      tagInput?.dispatchEvent(new Event("input", { bubbles: true }));
+      tagInput?.dispatchEvent(
+        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
+      );
+    });
+
+    expect(
+      document.querySelector(
+        'button[aria-label="Supprimer le tag Projet personnel"]',
+      ),
+    ).toBeInstanceOf(HTMLButtonElement);
+    expect((tagInput as HTMLInputElement).value).toBe("");
+  });
+
+  it("affiche les suggestions sur plusieurs lignes sans carrousel horizontal", () => {
+    const suggestions = document.querySelector(
+      '[data-testid="tag-suggestions-suggestions"]',
+    );
+
+    expect(suggestions?.className).toContain("flex-wrap");
+    expect(suggestions?.className).not.toContain("overflow-x-auto");
+    expect(document.body.textContent).toContain(
+      "Créer un tag personnalisé",
+    );
+  });
+
   it("explique un fichier invalide au moment de l’envoi", async () => {
     const input = document.querySelector("#scan-camera-image");
     expect(input).toBeInstanceOf(HTMLInputElement);

@@ -674,6 +674,40 @@ try {
     button.click();
     return true;
   })()`);
+  const customTagLayout = await evaluate(`(() => {
+    const input = document.querySelector("#tag-input");
+    const suggestions = document.querySelector(
+      '[data-testid="tag-suggestions-suggestions"]'
+    );
+    const selected = document.querySelector(
+      'button[aria-label="Supprimer le tag Anthropologie"]'
+    );
+    if (!input || !suggestions || !selected) {
+      throw new Error("Le sélecteur de tags personnalisés est incomplet");
+    }
+    input.scrollIntoView({ block: "center" });
+    return {
+      suggestionsWrap: suggestions.classList.contains("flex-wrap"),
+      suggestionsOverflow:
+        suggestions.scrollWidth > suggestions.clientWidth,
+      pageOverflow:
+        document.documentElement.scrollWidth >
+        document.documentElement.clientWidth,
+      customTagSelected: true
+    };
+  })()`);
+  const customTagScreenshot = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    fromSurface: true,
+  });
+  const customTagScreenshotPath = join(
+    artifactDirectory,
+    "custom-tags.png",
+  );
+  await writeFile(
+    customTagScreenshotPath,
+    Buffer.from(customTagScreenshot.data, "base64"),
+  );
   await setControlValue("#tag-input", "anthropologie");
   await evaluate(`(() => {
     const button = Array.from(document.querySelectorAll("button")).find(
@@ -952,6 +986,11 @@ try {
       apiOcrRequests.length === 1,
     aiTextSelectionWorks,
     aiCorrectionWorks,
+    customTags:
+      customTagLayout.customTagSelected &&
+      customTagLayout.suggestionsWrap &&
+      !customTagLayout.suggestionsOverflow &&
+      !customTagLayout.pageOverflow,
     noDirectBrowserUploadToThirdParty:
       directExternalImageRequests.length === 0,
     offlineAiBlockedCleanly,
@@ -980,6 +1019,7 @@ try {
     noteDetailScreenshot: noteDetailScreenshotPath,
     aiSelectionScreenshot: ocrScreenshotPath,
     quickScanScreenshot: quickScanScreenshotPath,
+    customTagScreenshot: customTagScreenshotPath,
     ideasScreenshot: ideasScreenshotPath,
   };
 

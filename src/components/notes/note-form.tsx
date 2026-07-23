@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type {
   Book,
@@ -37,7 +37,7 @@ type NoteFormProps =
       note: BookNote;
     };
 
-const suggestions = [
+const defaultSuggestions = [
   "Discipline",
   "Relations",
   "Travail",
@@ -66,11 +66,43 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
     tags: note?.tags ?? [],
   });
   const [tagDraft, setTagDraft] = useState("");
+  const [personalTagSuggestions, setPersonalTagSuggestions] = useState<
+    string[]
+  >([]);
   const [fieldErrors, setFieldErrors] = useState<NoteFieldErrors>({});
   const [tagError, setTagError] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    let active = true;
+    void noteRepository
+      .listAll()
+      .then((notes) => {
+        if (!active) return;
+        const defaults = new Set(
+          defaultSuggestions.map((tag) => tag.toLocaleLowerCase("fr")),
+        );
+        const existing = new Map<string, string>();
+        for (const existingNote of notes) {
+          for (const tag of existingNote.tags) {
+            const normalized = normalizeTag(tag);
+            const key = normalized.toLocaleLowerCase("fr");
+            if (normalized && !defaults.has(key) && !existing.has(key)) {
+              existing.set(key, normalized);
+            }
+          }
+        }
+        setPersonalTagSuggestions([...existing.values()].slice(0, 12));
+      })
+      .catch((error: unknown) => {
+        reportStorageError(error);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const openCamera = () => {
     cameraInputRef.current?.click();
@@ -116,6 +148,21 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
       ...current,
       tags: normalizeTags([...current.tags, normalized]),
     }));
+    const isDefault = defaultSuggestions.some(
+      (suggestion) =>
+        suggestion.toLocaleLowerCase("fr") ===
+        normalized.toLocaleLowerCase("fr"),
+    );
+    if (!isDefault) {
+      setPersonalTagSuggestions((current) => {
+        const withoutDuplicate = current.filter(
+          (tag) =>
+            tag.toLocaleLowerCase("fr") !==
+            normalized.toLocaleLowerCase("fr"),
+        );
+        return [normalized, ...withoutDuplicate].slice(0, 12);
+      });
+    }
     setTagDraft("");
     setTagError(null);
   };
@@ -361,30 +408,44 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
         <fieldset>
           <legend className="text-sm font-semibold">Tags</legend>
           <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
-            Validez avec Entrée ou avec le bouton Ajouter.
+            Classez cette note avec vos propres tags ou une suggestion.
           </p>
 
-          <div className="mt-3 flex gap-2">
-            <input
-              id="tag-input"
-              type="text"
-              value={tagDraft}
-              onChange={(event) => {
-                setTagDraft(event.target.value);
-                setTagError(null);
-              }}
-              onKeyDown={handleTagKeyDown}
-              placeholder="Ajouter un tag"
-              aria-describedby={tagError ? "tag-error" : undefined}
-              className={`${fieldClassName} min-h-12 min-w-0 flex-1`}
-            />
-            <button
-              type="button"
-              onClick={() => addTag()}
-              className="min-h-12 shrink-0 rounded-2xl border border-[var(--moss)] px-4 text-sm font-semibold text-[var(--moss)]"
-            >
-              Ajouter
-            </button>
+          <div className="mt-4 rounded-2xl border border-[var(--line)] bg-[var(--card)] p-4">
+            <label htmlFor="tag-input" className="block text-sm font-semibold">
+              Créer un tag personnalisé
+            </label>
+            <p className="mt-1 text-xs leading-5 text-[var(--muted)]">
+              Par exemple : Philosophie, À relire ou Projet personnel.
+            </p>
+            <div className="mt-3 grid min-w-0 gap-2 min-[24rem]:grid-cols-[minmax(0,1fr)_auto]">
+              <input
+                id="tag-input"
+                type="text"
+                value={tagDraft}
+                maxLength={30}
+                enterKeyHint="done"
+                autoCapitalize="sentences"
+                onChange={(event) => {
+                  setTagDraft(event.target.value);
+                  setTagError(null);
+                }}
+                onKeyDown={handleTagKeyDown}
+                placeholder="Mon nouveau tag"
+                aria-describedby={tagError ? "tag-error" : "tag-input-help"}
+                className={`${fieldClassName} min-h-12 min-w-0`}
+              />
+              <span id="tag-input-help" className="sr-only">
+                Validez avec Entrée ou avec le bouton Ajouter.
+              </span>
+              <button
+                type="button"
+                onClick={() => addTag()}
+                className="min-h-12 shrink-0 rounded-2xl border border-[var(--moss)] px-4 text-sm font-semibold text-[var(--moss)]"
+              >
+                Ajouter
+              </button>
+            </div>
           </div>
 
           {tagError ? (
@@ -405,27 +466,21 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
             </div>
           ) : null}
 
-          <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
-            {suggestions.map((suggestion) => {
-              const alreadyAdded = values.tags.some(
-                (tag) =>
-                  tag.toLocaleLowerCase("fr") ===
-                  suggestion.toLocaleLowerCase("fr"),
-              );
+          {personalTagSuggestions.length > 0 ? (
+            <TagSuggestionGroup
+              label="Mes tags"
+              suggestions={personalTagSuggestions}
+              selectedTags={values.tags}
+              onAdd={addTag}
+            />
+          ) : null}
 
-              return (
-                <button
-                  key={suggestion}
-                  type="button"
-                  disabled={alreadyAdded}
-                  onClick={() => addTag(suggestion)}
-                  className="min-h-10 shrink-0 rounded-full border border-[var(--line)] bg-[var(--card)] px-3 text-xs font-semibold text-[var(--muted)] disabled:opacity-40"
-                >
-                  + {suggestion}
-                </button>
-              );
-            })}
-          </div>
+          <TagSuggestionGroup
+            label="Suggestions"
+            suggestions={defaultSuggestions}
+            selectedTags={values.tags}
+            onAdd={addTag}
+          />
         </fieldset>
 
         <button
@@ -441,6 +496,49 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
         </button>
       </form>
       )}
+    </div>
+  );
+}
+
+function TagSuggestionGroup({
+  label,
+  suggestions,
+  selectedTags,
+  onAdd,
+}: {
+  label: string;
+  suggestions: readonly string[];
+  selectedTags: readonly string[];
+  onAdd: (tag: string) => void;
+}) {
+  const availableSuggestions = suggestions.filter(
+    (suggestion) =>
+      !selectedTags.some(
+        (tag) =>
+          tag.toLocaleLowerCase("fr") ===
+          suggestion.toLocaleLowerCase("fr"),
+      ),
+  );
+  if (availableSuggestions.length === 0) return null;
+
+  return (
+    <div className="mt-5">
+      <p className="text-xs font-semibold text-[var(--muted)]">{label}</p>
+      <div
+        className="mt-2 flex min-w-0 flex-wrap gap-2"
+        data-testid={`tag-suggestions-${label.toLocaleLowerCase("fr").replace(" ", "-")}`}
+      >
+        {availableSuggestions.map((suggestion) => (
+          <button
+            key={suggestion}
+            type="button"
+            onClick={() => onAdd(suggestion)}
+            className="min-h-10 max-w-full rounded-full border border-[var(--line)] bg-[var(--card)] px-3 text-xs font-semibold text-[var(--muted)]"
+          >
+            <span className="block max-w-full truncate">+ {suggestion}</span>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
