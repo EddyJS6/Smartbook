@@ -13,6 +13,7 @@
     "smoke:mobile": "node scripts/mobile-smoke.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.110.7",
     "dexie": "4.4.4",
     "next": "16.2.11",
     "react": "19.2.8",

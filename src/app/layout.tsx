@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { BottomNavigation } from "@/components/navigation/bottom-navigation";
+import { CloudAuthProvider } from "@/components/cloud/cloud-auth-provider";
 import { ServiceWorkerRegistration } from "@/components/pwa/service-worker-registration";
 import "./globals.css";
 
@@ -48,11 +49,13 @@ export default function RootLayout({
   return (
     <html lang="fr">
       <body>
-        <div className="app-shell">
-          <main>{children}</main>
-          <BottomNavigation />
-        </div>
-        <ServiceWorkerRegistration />
+        <CloudAuthProvider>
+          <div className="app-shell">
+            <main>{children}</main>
+            <BottomNavigation />
+          </div>
+          <ServiceWorkerRegistration />
+        </CloudAuthProvider>
       </body>
     </html>
   );

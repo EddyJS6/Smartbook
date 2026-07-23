@@ -41,6 +41,14 @@ describe("BookRepository", () => {
     expect(await database.books.count()).toBe(1);
     expect(await database.images.count()).toBe(1);
     expect(await repository.get(created.id)).toEqual(created);
+    expect(await database.syncQueue.get(`book:${created.id}`)).toMatchObject({
+      operation: "upsert",
+      status: "pending",
+    });
+    expect(
+      created.coverImageId &&
+        (await database.syncQueue.get(`coverImage:${created.coverImageId}`)),
+    ).toMatchObject({ operation: "upsert", parentId: created.id });
   });
 
   it("modifie un livre sans modifier sa date de création", async () => {
@@ -91,6 +99,14 @@ describe("BookRepository", () => {
     expect(updated?.coverImageId).not.toBe(oldImageId);
     expect(await database.images.count()).toBe(1);
     expect(oldImageId && (await database.images.get(oldImageId))).toBeUndefined();
+    expect(
+      oldImageId &&
+        (await database.syncQueue.get(`coverImage:${oldImageId}`)),
+    ).toMatchObject({ operation: "delete", parentId: created.id });
+    expect(
+      updated?.coverImageId &&
+        (await database.syncQueue.get(`coverImage:${updated.coverImageId}`)),
+    ).toMatchObject({ operation: "upsert", parentId: created.id });
   });
 
   it("supprime le livre, sa couverture et toutes ses notes", async () => {
@@ -114,6 +130,9 @@ describe("BookRepository", () => {
     expect(await database.books.count()).toBe(0);
     expect(await database.images.count()).toBe(0);
     expect(await database.bookNotes.count()).toBe(0);
+    expect(await database.syncQueue.get(`book:${created.id}`)).toMatchObject({
+      operation: "delete",
+    });
   });
 
   it("gère un livre inexistant sans exception", async () => {

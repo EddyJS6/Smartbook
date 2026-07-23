@@ -48,6 +48,10 @@ describe("NoteRepository", () => {
     expect(await notes.get(created.id)).toEqual(created);
     expect(await notes.listByBook(book.id)).toEqual([created]);
     expect(await notes.countByBook(book.id)).toBe(1);
+    expect(await database.syncQueue.get(`bookNote:${created.id}`)).toMatchObject({
+      operation: "upsert",
+      parentId: book.id,
+    });
   });
 
   it("enregistre une note scannée sans conserver la photo source", async () => {
@@ -115,6 +119,9 @@ describe("NoteRepository", () => {
     expect(await notes.get(created.id)).toBeUndefined();
     expect(await books.get(book.id)).toEqual(book);
     expect(await notes.delete(created.id)).toBe(false);
+    expect(await database.syncQueue.get(`bookNote:${created.id}`)).toMatchObject({
+      operation: "delete",
+    });
   });
 
   it("gère une note inexistante sans exception", async () => {

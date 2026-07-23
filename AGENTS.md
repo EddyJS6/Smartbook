@@ -3,15 +3,23 @@
 - BrainBook est une PWA personnelle mobile consacrée aux livres, notes de lecture et idées.
 - Stack : Next.js App Router, React, TypeScript strict et Tailwind CSS.
 - Concevoir mobile-first, avec une priorité à l’usage à une main et à Safari sur iPhone.
-- Respecter l’approche local-first : IndexedDB sera la source immédiate ; Supabase ne sera qu’une sauvegarde/synchronisation future.
+- Respecter l’approche local-first : IndexedDB reste la source immédiate de l’interface ; Supabase est uniquement une sauvegarde/synchronisation distante.
+- Une erreur cloud ne doit jamais annuler ni retarder une écriture locale réussie.
 - Faire évoluer IndexedDB par versions et migrations additives ; ne jamais réécrire un ancien schéma déjà diffusé.
 - Conserver les Blobs dans `images` et effectuer les changements livre/couverture dans une transaction unique.
 - Effectuer la suppression d’un livre, de ses notes et de leurs images dans une seule transaction afin de ne jamais laisser de donnée orpheline.
+- Toute mutation locale de livre, note ou couverture doit alimenter `syncQueue` dans la même transaction Dexie.
+- Toutes les tables Supabase personnelles et le bucket privé doivent rester protégés par RLS avec `auth.uid()`.
+- Ne jamais exposer de clé `service_role`, de secret administrateur ou de valeur contournant RLS dans le navigateur.
+- Ne jamais fusionner ou remplacer silencieusement deux bibliothèques ; toute action destructive exige un résumé et une confirmation explicite.
+- Un changement de compte doit bloquer la synchronisation automatique jusqu’à une décision explicite sur les données locales.
 - Faire alimenter au futur scanner le même brouillon et le même repository que la saisie manuelle, sans dupliquer le formulaire ni le modèle.
 - Le scan rapide ouvre directement l’appareil photo depuis le formulaire, puis présente seulement l’aperçu et l’action explicite « Envoyer » avant la route serveur OpenAI.
 - Conserver `OPENAI_API_KEY` exclusivement côté serveur, sans préfixe `NEXT_PUBLIC_`, et ne jamais l’écrire dans les logs.
 - Toute requête OpenAI de reconnaissance doit utiliser `store: false`, une réponse `no-store`, des limites de taille et une protection raisonnable contre les abus.
 - Ne jamais transmettre l’image d’une page en dehors du déclenchement explicite de la reconnaissance IA, et ne jamais la persister dans BrainBook.
+- Ne jamais ajouter une photo scannée, un brouillon OCR ou une réponse IA brute à la sauvegarde Supabase.
+- Le scanner et la reconnaissance IA sont stables : les travaux de synchronisation ne doivent jamais modifier leur code ni leur parcours.
 - Ne pas réintroduire de recadrage, redressement ou réglage préalable dans le parcours rapide sans une demande produit explicite.
 - Charger côté client, et uniquement au moment du besoin, les bibliothèques qui utilisent les API du navigateur.
 - Toute modification du moteur OCR doit préserver la sélection textuelle accessible de secours.

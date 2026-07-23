@@ -18,6 +18,10 @@ import {
   BrainBookStorageError,
   normalizeStorageError,
 } from "@/storage/errors";
+import {
+  enqueueSyncOperation,
+  notifyLocalMutation,
+} from "@/sync/queue";
 
 function normalizeInput(input: BookNoteInput): BookNoteInput {
   return {
@@ -37,10 +41,11 @@ export class NoteRepository {
     sourceType: NoteSourceType = "manual",
   ): Promise<BookNote> {
     try {
-      return await this.database.transaction(
+      const created = await this.database.transaction(
         "rw",
         this.database.books,
         this.database.bookNotes,
+        this.database.syncQueue,
         async () => {
           const book = await this.database.books.get(bookId as UUID);
           if (!book) {
@@ -62,9 +67,19 @@ export class NoteRepository {
           };
 
           await this.database.bookNotes.add(note);
+          await enqueueSyncOperation(
+            this.database,
+            "bookNote",
+            note.id,
+            "upsert",
+            note.bookId,
+            timestamp,
+          );
           return note;
         },
       );
+      notifyLocalMutation();
+      return created;
     } catch (error) {
       throw normalizeStorageError(error);
     }
@@ -106,10 +121,11 @@ export class NoteRepository {
     input: BookNoteInput,
   ): Promise<BookNote | undefined> {
     try {
-      return await this.database.transaction(
+      const updated = await this.database.transaction(
         "rw",
         this.database.books,
         this.database.bookNotes,
+        this.database.syncQueue,
         async () => {
           const existing = await this.database.bookNotes.get(id as UUID);
           if (!existing) return undefined;
@@ -129,9 +145,19 @@ export class NoteRepository {
           };
 
           await this.database.bookNotes.put(updated);
+          await enqueueSyncOperation(
+            this.database,
+            "bookNote",
+            updated.id,
+            "upsert",
+            updated.bookId,
+            updated.updatedAt,
+          );
           return updated;
         },
       );
+      if (updated) notifyLocalMutation();
+      return updated;
     } catch (error) {
       throw normalizeStorageError(error);
     }
@@ -139,14 +165,22 @@ export class NoteRepository {
 
   async delete(id: string): Promise<boolean> {
     try {
-      return await this.database.transaction(
+      const deleted = await this.database.transaction(
         "rw",
         this.database.bookNotes,
         this.database.images,
+        this.database.syncQueue,
         async () => {
           const note = await this.database.bookNotes.get(id as UUID);
           if (!note) return false;
 
+          await enqueueSyncOperation(
+            this.database,
+            "bookNote",
+            note.id,
+            "delete",
+            note.bookId,
+          );
           await this.database.bookNotes.delete(note.id);
           if (note.sourceImageId) {
             await this.database.images.delete(note.sourceImageId);
@@ -154,6 +188,8 @@ export class NoteRepository {
           return true;
         },
       );
+      if (deleted) notifyLocalMutation();
+      return deleted;
     } catch (error) {
       throw normalizeStorageError(error);
     }
@@ -161,10 +197,11 @@ export class NoteRepository {
 
   async deleteByBook(bookId: string): Promise<number> {
     try {
-      return await this.database.transaction(
+      const deletedCount = await this.database.transaction(
         "rw",
         this.database.bookNotes,
         this.database.images,
+        this.database.syncQueue,
         async () => {
           const notes = await this.database.bookNotes
             .where("bookId")
@@ -174,6 +211,15 @@ export class NoteRepository {
             note.sourceImageId ? [note.sourceImageId] : [],
           );
 
+          for (const note of notes) {
+            await enqueueSyncOperation(
+              this.database,
+              "bookNote",
+              note.id,
+              "delete",
+              note.bookId,
+            );
+          }
           await this.database.bookNotes.bulkDelete(
             notes.map((note) => note.id),
           );
@@ -183,6 +229,8 @@ export class NoteRepository {
           return notes.length;
         },
       );
+      if (deletedCount > 0) notifyLocalMutation();
+      return deletedCount;
     } catch (error) {
       throw normalizeStorageError(error);
     }

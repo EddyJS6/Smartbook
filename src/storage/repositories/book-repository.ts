@@ -12,6 +12,10 @@ import {
 } from "@/storage/database";
 import { normalizeStorageError } from "@/storage/errors";
 import { ImageRepository } from "@/storage/repositories/image-repository";
+import {
+  enqueueSyncOperation,
+  notifyLocalMutation,
+} from "@/sync/queue";
 
 export type CoverMutation =
   | { kind: "keep" }
@@ -51,10 +55,11 @@ export class BookRepository {
 
   async create(input: BookInput, cover?: PreparedImage): Promise<Book> {
     try {
-      return await this.database.transaction(
+      const created = await this.database.transaction(
         "rw",
         this.database.books,
         this.database.images,
+        this.database.syncQueue,
         async () => {
           const timestamp = new Date().toISOString();
           const storedImage = cover
@@ -69,9 +74,29 @@ export class BookRepository {
           };
 
           await this.database.books.add(book);
+          if (storedImage) {
+            await enqueueSyncOperation(
+              this.database,
+              "coverImage",
+              storedImage.id,
+              "upsert",
+              book.id,
+              timestamp,
+            );
+          }
+          await enqueueSyncOperation(
+            this.database,
+            "book",
+            book.id,
+            "upsert",
+            null,
+            timestamp,
+          );
           return book;
         },
       );
+      notifyLocalMutation();
+      return created;
     } catch (error) {
       throw normalizeStorageError(error);
     }
@@ -83,10 +108,11 @@ export class BookRepository {
     coverMutation: CoverMutation = { kind: "keep" },
   ): Promise<Book | undefined> {
     try {
-      return await this.database.transaction(
+      const updated = await this.database.transaction(
         "rw",
         this.database.books,
         this.database.images,
+        this.database.syncQueue,
         async () => {
           const existing = await this.database.books.get(id as UUID);
           if (!existing) return undefined;
@@ -114,15 +140,47 @@ export class BookRepository {
           await this.database.books.put(updated);
 
           if (
+            coverMutation.kind === "replace" &&
+            updated.coverImageId
+          ) {
+            await enqueueSyncOperation(
+              this.database,
+              "coverImage",
+              updated.coverImageId,
+              "upsert",
+              updated.id,
+              timestamp,
+            );
+          }
+
+          if (
             existing.coverImageId &&
             existing.coverImageId !== nextCoverId
           ) {
+            await enqueueSyncOperation(
+              this.database,
+              "coverImage",
+              existing.coverImageId,
+              "delete",
+              existing.id,
+              timestamp,
+            );
             await this.images.delete(existing.coverImageId);
           }
 
+          await enqueueSyncOperation(
+            this.database,
+            "book",
+            updated.id,
+            "upsert",
+            null,
+            timestamp,
+          );
           return updated;
         },
       );
+      if (updated) notifyLocalMutation();
+      return updated;
     } catch (error) {
       throw normalizeStorageError(error);
     }
@@ -130,11 +188,12 @@ export class BookRepository {
 
   async delete(id: string): Promise<boolean> {
     try {
-      return await this.database.transaction(
+      const deleted = await this.database.transaction(
         "rw",
         this.database.books,
         this.database.images,
         this.database.bookNotes,
+        this.database.syncQueue,
         async () => {
           const book = await this.database.books.get(id as UUID);
           if (!book) return false;
@@ -147,7 +206,29 @@ export class BookRepository {
           if (book.coverImageId) imageIds.add(book.coverImageId);
           for (const note of notes) {
             if (note.sourceImageId) imageIds.add(note.sourceImageId);
+            await enqueueSyncOperation(
+              this.database,
+              "bookNote",
+              note.id,
+              "delete",
+              book.id,
+            );
           }
+          if (book.coverImageId) {
+            await enqueueSyncOperation(
+              this.database,
+              "coverImage",
+              book.coverImageId,
+              "delete",
+              book.id,
+            );
+          }
+          await enqueueSyncOperation(
+            this.database,
+            "book",
+            book.id,
+            "delete",
+          );
 
           await this.database.bookNotes.bulkDelete(
             notes.map((note) => note.id),
@@ -160,6 +241,8 @@ export class BookRepository {
           return true;
         },
       );
+      if (deleted) notifyLocalMutation();
+      return deleted;
     } catch (error) {
       throw normalizeStorageError(error);
     }

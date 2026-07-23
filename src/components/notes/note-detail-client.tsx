@@ -86,7 +86,7 @@ export function NoteDetailClient() {
     const shortPreview =
       preview.length > 80 ? `${preview.slice(0, 80)}…` : preview;
     const confirmed = window.confirm(
-      `Supprimer définitivement « ${shortPreview} » de cet appareil ? Aucune sauvegarde distante n’est encore disponible.`,
+      `Supprimer « ${shortPreview} » de cet appareil ? La suppression sera aussi transmise à la sauvegarde cloud lors de la prochaine synchronisation.`,
     );
     if (!confirmed) return;
 

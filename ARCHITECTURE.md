@@ -15,7 +15,7 @@ La base s’appelle `brainbook`. Aucun livre, aucune couverture et aucune note n
 
 ## Schéma IndexedDB
 
-La version 1, déjà diffusée, déclare uniquement `books` et `images`. Elle reste inchangée dans le code. La **version 2** conserve ces deux tables et ajoute `bookNotes` de façon additive : l’ouverture de la base met à niveau le schéma sans transformer ni supprimer les livres et images existants.
+La version 1, déjà diffusée, déclare uniquement `books` et `images`. Elle reste inchangée dans le code. La **version 2** conserve ces deux tables et ajoute `bookNotes`. La **version 3** ajoute uniquement les structures techniques de sauvegarde `syncQueue`, `syncMetadata` et `localSafetyBackups`. Lors de la migration, les livres, notes et couvertures existants sont placés dans l’Outbox sans modifier les objets métier.
 
 ### Table `books`
 
@@ -63,6 +63,26 @@ Index : clé unique `id`, puis `bookId`, `createdAt` et `updatedAt`. Les tags re
 
 Une note est valide si elle contient au moins un passage ou une réflexion. Les deux champs peuvent coexister. Le nombre de notes est toujours calculé depuis `bookNotes` et n’est jamais dupliqué dans `Book`.
 
+### Tables techniques — ajoutées en version 3
+
+`syncQueue` est une Outbox locale. Sa clé stable
+`{entityType}:{entityId}` compacte automatiquement plusieurs modifications de
+la même entité. Elle contient le type (`book`, `bookNote`, `coverImage`),
+l’opération (`upsert`, `delete`), l’identifiant parent éventuel, les dates, le
+nombre d’essais, la dernière erreur et l’état (`pending`, `processing`,
+`failed`). Une suppression remplace l’upsert antérieur. Aucun Blob n’est copié
+dans la queue : une couverture y est seulement référencée.
+
+`syncMetadata` possède une ligne `primary` avec un UUID aléatoire
+d’installation, l’utilisateur associé, l’état de la première synchronisation,
+les dates des derniers push, pull, succès et restauration, ainsi qu’une version
+de protocole. Cet UUID n’est pas une empreinte du téléphone.
+
+`localSafetyBackups` conserve, avant une restauration, une fusion ou un
+changement de compte destructif, une copie versionnée des livres et notes. Elle
+référence les identifiants des couvertures mais ne duplique pas leurs Blobs ;
+cette limite est annoncée avant confirmation.
+
 ## Relations et intégrité
 
 Les repositories constituent la frontière d’accès aux données :
@@ -81,7 +101,9 @@ IndexedDB ne fournit pas de clés étrangères ni de cascade natives. Ces règle
 - `src/storage/repositories` centralise les opérations sur les livres, images et notes.
 - `src/hooks` adapte les repositories au cycle de vie React.
 - `src/lib/image-processing.ts` valide, oriente selon les capacités du navigateur, redimensionne et compresse les couvertures.
-- les composants visuels n’accèdent pas directement aux tables Dexie.
+- les composants métier visuels continuent d’utiliser les repositories ;
+- `src/sync` coordonne l’Outbox, Supabase, les imports et les écritures locales
+  de restauration sans devenir la source de lecture de l’interface.
 
 La recherche de « Mes idées » joint les notes et leurs livres en mémoire, puis porte sur le passage, la réflexion, la référence, les tags, le titre et l’auteur. La recherche est insensible à la casse et aux accents. Le filtre par tag peut être combiné avec le texte recherché.
 
@@ -90,6 +112,123 @@ La recherche de « Mes idées » joint les notes et leurs livres en mémoire, pu
 La couverture source est limitée à 15 Mo et à 40 mégapixels pour protéger la mémoire mobile. Elle est décodée avec les API natives, redimensionnée afin que son plus grand côté ne dépasse pas 1 200 pixels, puis compressée en JPEG avec une qualité raisonnable.
 
 L’affichage récupère le Blob seulement lorsque nécessaire, crée une Object URL, puis la révoque au démontage ou au changement de couverture. Sans image, un placeholder déterministe est généré visuellement à partir du titre et de l’auteur, sans persistance supplémentaire.
+
+## Sauvegarde Supabase
+
+Supabase est une sauvegarde distante facultative. IndexedDB reste disponible
+sans compte, sans réseau et lorsque Supabase échoue. Les mutations des
+repositories enregistrent d’abord les données métier et l’opération Outbox dans
+une seule transaction Dexie. L’appel réseau se produit seulement après le
+commit ; il ne peut donc pas annuler une mutation locale.
+
+Le client navigateur centralisé utilise uniquement
+`NEXT_PUBLIC_SUPABASE_URL` et `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`. Ces valeurs
+sont publiques par conception. La sécurité repose sur la session Auth et RLS.
+Une clé `service_role`, un secret administrateur, un mot de passe ou
+`OPENAI_API_KEY` ne doivent jamais entrer dans le bundle client.
+
+### Authentification
+
+La connexion utilise `signInWithPassword` avec email et mot de passe. Il
+n’existe ni inscription publique dans l’interface, ni OAuth, Magic Link ou OTP.
+Le compte personnel est créé dans le tableau de bord Supabase. Le client active
+`persistSession` et `autoRefreshToken`, désactive la détection de session dans
+l’URL et écoute `onAuthStateChange`. La PWA ne demande donc pas une nouvelle
+connexion à chaque ouverture normale.
+
+La déconnexion invalide la session locale et annule logiquement la génération
+de synchronisation en cours, sans effacer IndexedDB. Si un autre utilisateur se
+connecte, `associatedUserId` bloque tout push automatique. L’utilisateur doit
+reconnecter l’ancien compte, rester en local, ou confirmer l’effacement local
+après création d’une sauvegarde structurée.
+
+### Schéma distant et RLS
+
+La migration versionnée crée `public.books` et `public.book_notes`. Les deux
+tables utilisent la clé composite `(user_id, id)`, conservent les UUID locaux,
+les dates métier, `deleted_at` et un `server_updated_at` alimenté par trigger.
+La note possède une clé étrangère composite `(user_id, book_id)` vers le livre,
+ce qui interdit de rattacher une note au livre d’un autre utilisateur.
+
+RLS est activé sur les deux tables. Les seules policies accordent au rôle
+`authenticated` les opérations SELECT, INSERT, UPDATE et DELETE lorsque
+`auth.uid() = user_id`. Le rôle `anon` ne reçoit aucun droit sur les données
+personnelles.
+
+### Couvertures privées
+
+Le bucket `book-covers` est privé et limité aux formats image usuels. Les
+policies `storage.objects` vérifient que le premier segment du chemin égale
+`auth.uid()`. Le chemin stable est :
+
+`{userId}/{bookId}/{imageId}.jpg`
+
+L’upload transmet directement le Blob JPEG déjà redimensionné à 1 200 px ; il
+n’utilise ni Base64 ni image originale. Au pull, le fichier est téléchargé avec
+la session, validé, recréé comme Blob dans `images`, puis associé au livre.
+BrainBook ne persiste jamais une URL signée.
+
+### Service et ordre de synchronisation
+
+`SyncService` possède un verrou par installation. Une seconde synchronisation
+automatique réutilise la promesse active au lieu de lancer des écritures
+concurrentes. Une génération logique invalide les résultats devenus obsolètes
+après déconnexion ou changement de compte.
+
+Le push remet d’abord d’éventuelles entrées `processing` en attente, respecte
+un délai exponentiel limité, puis traite :
+
+1. upload des nouvelles couvertures ;
+2. upsert des livres ;
+3. upsert des notes ;
+4. suppressions logiques des notes ;
+5. suppressions logiques des livres ;
+6. suppression des anciens fichiers de couverture.
+
+Un succès supprime l’entrée. Une erreur temporaire conserve l’entrée et
+incrémente `attemptCount`. Après trois essais, ou immédiatement pour une erreur
+permanente de validation, d’authentification, RLS, table ou bucket, elle devient
+`failed` jusqu’à l’action « Réessayer ».
+
+Le pull lit les lignes actives et les tombstones. Les données distantes sont
+validées avant écriture : UUID, propriétaire, dates, statut, source, tags et
+relation livre/note. Une ligne invalide est ignorée avec un avertissement. Les
+écritures de pull utilisent directement une transaction Dexie afin de ne pas
+réalimenter l’Outbox.
+
+### Première synchronisation et restauration
+
+Les quatre cas local/cloud sont toujours inspectés avant activation :
+
+- local rempli, cloud vide : sauvegarde complète de l’appareil ;
+- local vide, cloud rempli : restauration ;
+- tous deux vides : activation immédiate ;
+- tous deux remplis : choix explicite entre fusion, conservation de l’appareil
+  et restauration cloud.
+
+Une restauration télécharge et valide les données avant de remplacer
+atomiquement les tables métier. Une sauvegarde structurée locale est créée
+avant tout remplacement non vide. Une couverture manquante ne bloque pas le
+livre : son placeholder est utilisé.
+
+La fusion se fait par UUID. Deux UUID différents sont conservés. Pour un même
+UUID, `updatedAt` le plus récent gagne ; une mutation locale encore en attente
+n’est pas écrasée pendant une synchronisation normale. Un `deleted_at` plus
+récent évite la résurrection. Les horloges d’appareils restant imparfaites,
+cette stratégie est adaptée à un usage personnel et non à l’édition simultanée
+collaborative.
+
+### Déclencheurs iPhone
+
+Après activation, une synchronisation est tentée au lancement, après une
+mutation enregistrée (debounce), au retour en ligne, au retour au premier plan
+et sur action manuelle. Le fonctionnement ne dépend pas de Background Sync :
+Safari peut suspendre rapidement une PWA en arrière-plan.
+
+La section Réglages distingue « À jour », « Modifications en attente »,
+« Synchronisation en cours », « Hors ligne », « Erreur de sauvegarde » et
+« Connexion requise ». Elle ne promet jamais « À jour » tant que la queue
+contient une opération en attente ou en erreur.
 
 ## Reconnaissance IA et parcours scanner
 
@@ -176,9 +315,13 @@ puis marque le brouillon `sourceType: "scan"`.
 
 ## Persistance et confidentialité du scan
 
-Le scanner utilise le formulaire et `NoteRepository.create` existants. Une note scannée est enregistrée avec `sourceType: "scan"` et `sourceImageId: null`. Le schéma IndexedDB v2 ne change donc pas.
+Le scanner utilise le formulaire et `NoteRepository.create` existants. Une note scannée est enregistrée avec `sourceType: "scan"` et `sourceImageId: null`. La synchronisation commence uniquement après cet enregistrement final.
 
 La photographie n’est jamais inscrite dans IndexedDB. Après une action explicite, la page préparée est envoyée temporairement à la route Vercel puis à l’API OpenAI. BrainBook ne la stocke ni dans sa base, ni dans Cache Storage, ni dans les logs applicatifs. Après enregistrement ou abandon, le fichier, le Blob préparé et les Object URLs sont libérés.
+
+Supabase reçoit uniquement le contenu final de `BookNote`. Il ne reçoit jamais
+la photographie de page, le brouillon du scanner, la réponse brute de l’IA, le
+prompt, les coordonnées ou les résultats OCR intermédiaires.
 
 Les données envoyées à l’API OpenAI ne servent pas à entraîner les modèles par défaut, sauf consentement explicite du titulaire du compte. Les journaux de surveillance des abus peuvent cependant contenir des données client pendant une durée pouvant aller jusqu’à 30 jours selon les contrôles du compte OpenAI. Le champ `sourceImageId` reste `null`.
 
@@ -196,9 +339,11 @@ Certains formats, notamment une image HEIC non décodable par la version de Safa
 
 ## Migrations futures
 
-Les évolutions doivent ajouter une nouvelle déclaration `database.version(n)` et, seulement si nécessaire, une transformation explicite. Une version existante ne doit jamais être réécrite après diffusion. Un test ouvre une base v1 peuplée avec la classe v2 pour vérifier que les données historiques sont conservées.
+Les évolutions doivent ajouter une nouvelle déclaration `database.version(n)` et, seulement si nécessaire, une transformation explicite. Une version existante ne doit jamais être réécrite après diffusion. Un test ouvre une base v1 peuplée avec la classe v3 pour vérifier que les données historiques sont conservées et placées dans l’Outbox.
 
-Les UUID locaux seront aussi les identifiants distants. `updatedAt` permettra plus tard de repérer les changements à synchroniser. Supabase servira de sauvegarde et de synchronisation, jamais de prérequis au fonctionnement immédiat.
+Les migrations Supabase vivent dans `supabase/migrations` et sont appliquées au
+projet lié avec `supabase db push`. Elles ne doivent pas être recréées
+manuellement colonne par colonne dans le tableau de bord.
 
 ## Limites actuelles
 
@@ -208,7 +353,19 @@ La photo originale et la transcription textuelle éditable servent de secours.
 
 Il n’y a ni scan multipage, ni import PDF, ni détection automatique de langue.
 
-Il n’y a toujours ni authentification ni synchronisation distante. La route payante est donc protégée seulement par l’origine, des limites de taille et une limite de fréquence par instance. Un déploiement publiquement connu doit ajouter une règle Vercel de rate limiting et une limite de dépense OpenAI stricte. Les suppressions sont définitives sur l’appareil et les confirmations l’indiquent explicitement.
+La synchronisation n’est ni temps réel, ni collaborative. Deux appareils qui
+modifient simultanément la même note peuvent produire un résultat dépendant de
+leurs horloges ; le dernier `updatedAt` gagne sauf mutation locale encore en
+attente. Il n’existe pas encore de purge planifiée des tombstones distants.
+
+La sauvegarde structurée précédant une restauration protège les livres et
+notes, mais ne constitue pas encore un export ZIP indépendant contenant les
+Blobs de couverture.
+
+La route OpenAI payante reste protégée seulement par l’origine, des limites de
+taille et une limite de fréquence par instance. Un déploiement publiquement
+connu doit ajouter une règle Vercel de rate limiting et une limite de dépense
+OpenAI stricte.
 
 Le service worker gère le shell, les routes visitées et les ressources statiques.
 Les données métier IndexedDB et les photos de page ne sont ni mises en cache par

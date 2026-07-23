@@ -65,7 +65,7 @@ export function BookDetailClient() {
     if (!book || isDeleting) return;
 
     const confirmed = window.confirm(
-      `Supprimer « ${book.title} » ? Cette action supprimera sa couverture et toutes ses notes associées. Elle est irréversible.`,
+      `Supprimer « ${book.title} » ? Sa couverture et toutes ses notes disparaîtront immédiatement de cet appareil, puis de la sauvegarde cloud lors de la prochaine synchronisation.`,
     );
     if (!confirmed) return;
 

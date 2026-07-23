@@ -23,7 +23,7 @@ describe("BrainBookDatabase migrations", () => {
     await Promise.all(databasesToDelete.splice(0).map((name) => Dexie.delete(name)));
   });
 
-  it("conserve les livres existants lors du passage de v1 à v2", async () => {
+  it("conserve les livres et crée l’Outbox lors du passage de v1 à v3", async () => {
     const name = `brainbook-migration-test-${crypto.randomUUID()}`;
     databasesToDelete.push(name);
     const legacy = new LegacyBrainBookDatabase(name);
@@ -43,9 +43,24 @@ describe("BrainBookDatabase migrations", () => {
     const migrated = new BrainBookDatabase(name);
     await migrated.open();
 
-    expect(migrated.verno).toBe(2);
+    expect(migrated.verno).toBe(3);
     expect(await migrated.books.get(existingBook.id)).toEqual(existingBook);
     expect(await migrated.bookNotes.count()).toBe(0);
+    expect(await migrated.syncQueue.toArray()).toMatchObject([
+      {
+        id: `book:${existingBook.id}`,
+        entityType: "book",
+        entityId: existingBook.id,
+        operation: "upsert",
+        status: "pending",
+      },
+    ]);
+    expect(await migrated.syncMetadata.get("primary")).toMatchObject({
+      id: "primary",
+      associatedUserId: null,
+      firstSyncCompleted: false,
+      schemaVersion: 1,
+    });
     migrated.close();
   });
 });
