@@ -1,4 +1,5 @@
 const CACHE_NAME = "brainbook-shell-v1";
+const OCR_METADATA_CACHE = "brainbook-ocr-metadata-v1";
 const OFFLINE_URL = "/offline";
 const APP_SHELL = ["/", "/offline", "/manifest.webmanifest"];
 
@@ -16,7 +17,10 @@ self.addEventListener("activate", (event) => {
       .then((keys) =>
         Promise.all(
           keys
-            .filter((key) => key !== CACHE_NAME)
+            .filter(
+              (key) =>
+                key !== CACHE_NAME && key !== OCR_METADATA_CACHE,
+            )
             .map((key) => caches.delete(key)),
         ),
       ),

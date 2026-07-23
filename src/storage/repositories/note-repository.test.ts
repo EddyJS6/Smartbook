@@ -50,6 +50,29 @@ describe("NoteRepository", () => {
     expect(await notes.countByBook(book.id)).toBe(1);
   });
 
+  it("enregistre une note scannée sans conserver la photo source", async () => {
+    const book = await createBook();
+    const created = await notes.create(
+      book.id,
+      {
+        extractedText: "Passage corrigé après OCR",
+        personalReflection: "Une réflexion personnelle",
+        pageNumber: "p. 24",
+        tags: ["OCR"],
+      },
+      "scan",
+    );
+
+    expect(created).toMatchObject({
+      sourceType: "scan",
+      sourceImageId: null,
+      extractedText: "Passage corrigé après OCR",
+      personalReflection: "Une réflexion personnelle",
+      tags: ["OCR"],
+    });
+    expect(await database.images.count()).toBe(0);
+  });
+
   it("modifie le contenu sans changer l’identité ni la provenance", async () => {
     const book = await createBook();
     const created = await notes.create(book.id, {

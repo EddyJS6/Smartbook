@@ -91,11 +91,68 @@ La couverture source est limitée à 15 Mo et à 40 mégapixels pour protéger l
 
 L’affichage récupère le Blob seulement lorsque nécessaire, crée une Object URL, puis la révoque au démontage ou au changement de couverture. Sans image, un placeholder déterministe est généré visuellement à partir du titre et de l’auteur, sans persistance supplémentaire.
 
-## Préparation du scanner
+## OCR local et parcours scanner
 
-Le mode actuel crée des notes `manual`. Le bouton scanner est visible mais désactivé et ne demande aucune permission caméra.
+BrainBook utilise **Tesseract.js 7.0.0** pour reconnaître localement le texte d’une page. Le module est importé dynamiquement par `BrowserOcrSession` uniquement après une action explicite sur l’écran de scan. Il n’est ni importé pendant le rendu serveur, ni chargé par la bibliothèque ou la page « Mes idées ».
 
-Un futur scanner devra produire le même brouillon de formulaire (`extractedText`, réflexion, page et tags) et enregistrer via le même repository. Il changera uniquement `sourceType` en `scan` et pourra renseigner `sourceImageId`. Il ne doit pas introduire un second modèle, un second formulaire ou un parcours CRUD parallèle.
+Tesseract s’exécute dans son Web Worker. Une session possède au maximum un worker :
+
+- le worker est réutilisé pour les analyses successives dans la même langue ;
+- changer de langue termine le worker courant avant d’en créer un autre ;
+- annuler invalide l’identifiant d’opération, termine le worker et ignore tout résultat tardif ;
+- quitter le scan ou démonter le composant termine également le worker ;
+- aucun scheduler multi-worker n’est utilisé.
+
+Les langues proposées sont le français (`fra`), l’anglais (`eng`) et le polonais (`pol`), une seule à la fois. Le français est sélectionné par défaut. Le worker et le cœur WebAssembly utilisent les chemins cohérents avec les versions installées calculés par Tesseract.js ; aucune URL versionnée n’est recopiée dans le code BrainBook. Sans `langPath` personnalisé, Tesseract.js récupère le modèle choisi depuis `@tesseract.js-data/<lang>/4.0.0_best_int` sur jsDelivr, le décompresse puis le met en cache dans IndexedDB. BrainBook conserve dans Cache Storage un simple marqueur technique après une préparation réussie afin d’éviter de lancer hors ligne une langue jamais téléchargée. Ce marqueur ne contient ni photo ni texte.
+
+Le cache du modèle améliore les analyses suivantes. Un premier chargement exige une connexion. Une utilisation totalement hors ligne après ce premier chargement dépend aussi de la disponibilité du worker et du cœur WebAssembly dans le cache HTTP du navigateur ; elle doit donc être vérifiée sur chaque version de Safari et n’est pas présentée comme une garantie absolue.
+
+## Pipeline d’image OCR
+
+La photo reste temporaire et côté client :
+
+1. validation du fichier et de sa taille, limitée à 20 Mo ;
+2. décodage réel avec `createImageBitmap` orienté selon les métadonnées, puis secours `HTMLImageElement` ;
+3. refus des dimensions nulles, trop petites (moins de 320 px sur un côté) ou supérieures à 60 mégapixels ;
+4. rotation par pas de 90 degrés dans Canvas ;
+5. redimensionnement proportionnel sans agrandissement, avec un grand côté limité à **2 400 px** ;
+6. mode `Original` en couleur ou mode `Contraste amélioré` combinant niveaux de gris, contraste modéré et léger éclaircissement ;
+7. export temporaire JPEG de qualité 0,90, utilisé à la fois pour l’aperçu et l’OCR.
+
+Cette limite offre des caractères suffisamment détaillés tout en évitant de traiter une photo iPhone pleine résolution dans le moteur. Le code ne conserve qu’une référence au fichier choisi et un Blob préparé à la fois. Les `ImageBitmap`, canvases, anciens Blobs et Object URLs sont fermés, réduits, remplacés ou révoqués dès qu’ils ne sont plus utiles.
+
+HEIC/HEIF fonctionne uniquement lorsque Safari peut le décoder nativement. Aucune bibliothèque lourde de conversion n’est ajoutée ; un échec propose de reprendre la photo ou d’utiliser un JPEG.
+
+## Modèle OCR interne
+
+Les composants ne dépendent pas de la structure brute de Tesseract. Le domaine expose :
+
+- `OcrBoundingBox` pour les coordonnées `x0`, `y0`, `x1`, `y1` ;
+- `OcrWord` pour le texte, la confiance, la boîte, les indices structurels et l’ordre stable ;
+- `OcrLine` pour les mots, le texte, la boîte et sa position structurelle ;
+- `OcrResult` pour le texte intégral, les mots, les lignes, les dimensions, la confiance moyenne, la langue et la durée.
+
+L’appel `worker.recognize` active explicitement les sorties `text` et `blocks`, désactivées par défaut dans les versions récentes. La transformation parcourt blocs, paragraphes, lignes puis mots. Elle ignore les mots vides mais conserve ceux de faible confiance. Un résultat partiel contenant du texte sans blocs reste utilisable par la sélection textuelle de secours.
+
+## Sélection et reconstruction du passage
+
+Sur la photo, chaque mot est superposé en pourcentage des dimensions de l’image OCR. L’image et la couche partagent le même conteneur et le même facteur de zoom (100 %, 150 % ou 200 %), ce qui maintient l’alignement lors du redimensionnement. Les Pointer Events gèrent doigt, souris et stylet sans placer chaque mot dans l’ordre de tabulation.
+
+La sélection est une plage `startOrder` / `endOrder`. Elle accepte le glissement avec capture du pointeur, `pointercancel`, la sélection en sens inverse, ou deux touchers successifs sur le premier et le dernier mot. Les événements de mouvement ne changent React que lorsque le mot réellement survolé change. Les actions permettent d’effacer, de tout sélectionner, de recommencer ou d’utiliser le passage.
+
+La reconstruction trie les mots par ordre de lecture, conserve un saut de ligne entre lignes et deux entre paragraphes ou blocs. Elle retire l’espace avant les ponctuations fermantes et rattache correctement apostrophes et traits d’union, sans modifier les données OCR originales.
+
+L’alternative « Sélectionner dans le texte » est toujours disponible. Elle permet de corriger le texte, d’utiliser `selectionStart` / `selectionEnd` du `textarea`, ou de choisir explicitement tout le texte. Elle couvre l’accessibilité et les cas où les boîtes sont absentes ou mal alignées.
+
+Après sélection, une étape de vérification conserve un passage entièrement éditable. « Ajouter à ma note » remplit le même `extractedText` que la saisie manuelle, conserve réflexion, page et tags, puis marque le brouillon `sourceType: "scan"`.
+
+## Persistance et confidentialité du scan
+
+Le scanner utilise le formulaire et `NoteRepository.create` existants. Une note scannée est enregistrée avec `sourceType: "scan"` et `sourceImageId: null`. Le schéma IndexedDB v2 ne change donc pas.
+
+La photographie n’est jamais envoyée à une route Next.js, une API OCR ou un service distant, et elle n’est jamais inscrite dans IndexedDB. Seuls le worker, le cœur WebAssembly et le modèle de langue sont susceptibles d’être téléchargés. Après enregistrement ou abandon, le fichier, le Blob préparé, les Object URLs et le worker sont libérés.
+
+Ne pas conserver les photos protège la confidentialité des pages complètes, réduit fortement le stockage mobile et simplifie une future synchronisation. Le champ `sourceImageId` reste réservé à une éventuelle option volontaire ultérieure.
 
 ## Compatibilité iPhone
 
@@ -116,6 +173,8 @@ Les UUID locaux seront aussi les identifiants distants. `updatedAt` permettra pl
 
 ## Limites actuelles
 
-Il n’y a pour l’instant ni OCR, ni capture caméra, ni authentification, ni synchronisation distante. Les suppressions sont donc définitives sur l’appareil et les confirmations l’indiquent explicitement.
+Il n’y a ni correction automatique de perspective, ni détection des quatre coins, ni recadrage avancé, ni scan multipage, ni import PDF, ni détection automatique de langue. Une page incurvée ou photographiée avec un fort angle peut produire des boîtes imprécises ; la sélection textuelle sert alors de secours. Une future étape pourra ajouter recadrage et correction de perspective sans changer le modèle `OcrResult` ni le formulaire de note.
+
+Il n’y a toujours ni authentification ni synchronisation distante. Les suppressions sont donc définitives sur l’appareil et les confirmations l’indiquent explicitement.
 
 Le service worker continue de gérer uniquement le shell, les routes visitées et les ressources statiques. Les données IndexedDB ne sont ni mises en cache par le service worker ni synchronisées à distance.

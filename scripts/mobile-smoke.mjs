@@ -1,5 +1,12 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -101,6 +108,18 @@ const profileDirectory = join(
 const artifactDirectory = join(process.cwd(), ".next", "smoke");
 await mkdir(profileDirectory, { recursive: true });
 await mkdir(artifactDirectory, { recursive: true });
+const chunkDirectory = join(process.cwd(), ".next", "static", "chunks");
+const ocrChunkFileNames = [];
+for (const fileName of await readdir(chunkDirectory)) {
+  if (!fileName.endsWith(".js")) continue;
+  const source = await readFile(join(chunkDirectory, fileName), "utf8");
+  if (
+    source.includes("recognizing text") ||
+    source.includes("tesseract.js-core")
+  ) {
+    ocrChunkFileNames.push(fileName);
+  }
+}
 
 const browserProcess = spawn(
   browserPath,
@@ -121,6 +140,7 @@ try {
   await cdp.ready;
 
   const browserErrors = [];
+  const networkRequests = [];
   cdp.onMessage((message) => {
     if (message.method === "Runtime.exceptionThrown") {
       browserErrors.push(message.params.exceptionDetails.text);
@@ -131,12 +151,51 @@ try {
     ) {
       browserErrors.push(message.params.entry.text);
     }
+    if (message.method === "Network.requestWillBeSent") {
+      const request = message.params.request;
+      networkRequests.push({
+        url: request.url,
+        method: request.method,
+        type: message.params.type,
+        source: "page",
+        hasPostData: Boolean(request.hasPostData),
+        postDataLength: request.postData?.length ?? 0,
+      });
+    }
+    if (
+      message.method === "Target.attachedToTarget" &&
+      message.params.targetInfo.type === "worker"
+    ) {
+      void cdp.send("Target.sendMessageToTarget", {
+        sessionId: message.params.sessionId,
+        message: JSON.stringify({ id: 1, method: "Network.enable" }),
+      });
+    }
+    if (message.method === "Target.receivedMessageFromTarget") {
+      const childMessage = JSON.parse(message.params.message);
+      if (childMessage.method === "Network.requestWillBeSent") {
+        const request = childMessage.params.request;
+        networkRequests.push({
+          url: request.url,
+          method: request.method,
+          type: childMessage.params.type,
+          source: "worker",
+          hasPostData: Boolean(request.hasPostData),
+          postDataLength: request.postData?.length ?? 0,
+        });
+      }
+    }
   });
 
   await cdp.send("Page.enable");
   await cdp.send("Runtime.enable");
   await cdp.send("Log.enable");
   await cdp.send("Network.enable");
+  await cdp.send("Target.setAutoAttach", {
+    autoAttach: true,
+    waitForDebuggerOnStart: false,
+    flatten: false,
+  });
   await cdp.send("Emulation.setDeviceMetricsOverride", {
     width: 390,
     height: 844,
@@ -160,8 +219,8 @@ try {
     return result.result.value;
   };
 
-  const waitFor = async (expression, message) => {
-    for (let attempt = 0; attempt < 40; attempt += 1) {
+  const waitFor = async (expression, message, attempts = 40) => {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (await evaluate(expression)) return;
       await new Promise((resolve) => setTimeout(resolve, 150));
     }
@@ -230,6 +289,33 @@ try {
           images: imagesRequest.result,
           notes: notesRequest.result
         });
+        transaction.onerror = () => reject(transaction.error);
+      };
+    })`);
+
+  const readLatestNote = () =>
+    evaluate(`new Promise((resolve, reject) => {
+      const request = indexedDB.open("brainbook");
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const database = request.result;
+        const transaction = database.transaction(["bookNotes"], "readonly");
+        const notesRequest = transaction.objectStore("bookNotes").getAll();
+        transaction.oncomplete = () => {
+          const notes = notesRequest.result.sort(
+            (left, right) => right.updatedAt.localeCompare(left.updatedAt)
+          );
+          const note = notes[0];
+          resolve(note ? {
+            id: note.id,
+            sourceType: note.sourceType,
+            sourceImageId: note.sourceImageId,
+            extractedText: note.extractedText,
+            personalReflection: note.personalReflection,
+            pageNumber: note.pageNumber,
+            tags: note.tags
+          } : null);
+        };
         transaction.onerror = () => reject(transaction.error);
       };
     })`);
@@ -412,19 +498,248 @@ try {
     `location.pathname === "/books/${notesBookId}/notes/new"`,
     "Le formulaire de note ne s’est pas ouvert.",
   );
-  const scannerDisabled = await evaluate(
-    `Array.from(document.querySelectorAll("button")).some((button) => button.disabled && button.textContent.includes("Scanner une page"))`,
+  const scannerEnabled = await evaluate(
+    `Array.from(document.querySelectorAll("button")).some((button) => !button.disabled && button.textContent.includes("Scanner une page"))`,
   );
-  await click('button[type="submit"]');
+  const ocrChunksBeforeActivation = networkRequests.filter((request) =>
+    ocrChunkFileNames.some((fileName) => request.url.endsWith(fileName)),
+  );
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.includes("Scanner une page")
+    );
+    if (!button) throw new Error("Mode scanner introuvable");
+    button.click();
+    return true;
+  })()`);
   await waitFor(
-    `document.body.innerText.includes("Ajoutez au moins un passage")`,
-    "La validation d’une note vide ne s’est pas affichée.",
+    `document.querySelector("#scan-camera-image") !== null && document.body.innerText.includes("La reconnaissance est effectuée sur cet appareil")`,
+    "Le mode scanner ne s’est pas activé.",
   );
+  const cameraCaptureConfigured = await evaluate(
+    `document.querySelector("#scan-camera-image")?.getAttribute("capture") === "environment" && !document.querySelector("#scan-library-image")?.hasAttribute("capture")`,
+  );
+  const requestsBeforePhoto = networkRequests.length;
+  await evaluate(`(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1200;
+    canvas.height = 1600;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#fffdf9";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "#171712";
+    context.font = "bold 72px Arial";
+    context.fillText("LES MYTHES ORGANISENT", 90, 300);
+    context.fillText("LES SOCIETES HUMAINES", 90, 410);
+    context.font = "48px Arial";
+    context.fillText("La lecture nourrit la pensee.", 90, 560);
+    context.fillText("Chaque idee ouvre un nouveau chemin.", 90, 650);
+    const blob = await new Promise((resolve) =>
+      canvas.toBlob(resolve, "image/png")
+    );
+    const file = new File([blob], "page-brainbook.png", {
+      type: "image/png"
+    });
+    const transfer = new DataTransfer();
+    transfer.items.add(file);
+    const input = document.querySelector("#scan-library-image");
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: transfer.files
+    });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return { size: blob.size, type: blob.type };
+  })()`);
+  await waitFor(
+    `document.querySelector('img[alt="Aperçu de la page à analyser"]') !== null && Array.from(document.querySelectorAll("button")).some((button) => button.textContent.includes("Lancer la reconnaissance"))`,
+    "La photo de page n’a pas été préparée.",
+    120,
+  );
+  await click('button[aria-label="Faire pivoter l’image vers la gauche"]');
+  await waitFor(
+    `Array.from(document.querySelectorAll("button")).some((button) => button.textContent.includes("Lancer la reconnaissance"))`,
+    "La rotation de la page n’a pas abouti.",
+    120,
+  );
+  await click('button[aria-label="Faire pivoter l’image vers la droite"]');
+  await waitFor(
+    `Array.from(document.querySelectorAll("button")).some((button) => button.textContent.includes("Lancer la reconnaissance"))`,
+    "La seconde rotation de la page n’a pas abouti.",
+    120,
+  );
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.trim() === "Contraste amélioré"
+    );
+    if (!button) throw new Error("Mode contraste introuvable");
+    button.click();
+    return true;
+  })()`);
+  await waitFor(
+    `Array.from(document.querySelectorAll("button")).some((button) => button.textContent.includes("Lancer la reconnaissance"))`,
+    "Le mode de contraste n’a pas été préparé.",
+    120,
+  );
+  const languageChoices = await evaluate(
+    `Array.from(document.querySelector("#ocr-language")?.options ?? []).map((option) => option.value)`,
+  );
+  await setControlValue("#ocr-language", "eng", "select");
+  await setControlValue("#ocr-language", "fra", "select");
+  const photoPreparationRequests = networkRequests.slice(requestsBeforePhoto);
+  const ocrChunksBeforeRecognition = networkRequests.filter((request) =>
+    ocrChunkFileNames.some((fileName) => request.url.endsWith(fileName)),
+  );
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.includes("Lancer la reconnaissance")
+    );
+    if (!button) throw new Error("Lancement OCR introuvable");
+    button.click();
+    return true;
+  })()`);
+  await waitFor(
+    `document.body.innerText.includes("Sélectionnez votre passage")`,
+    "Le véritable OCR local n’a pas produit de texte sélectionnable.",
+    800,
+  );
+  const recognizedWordCount = await evaluate(
+    `document.querySelectorAll("[data-ocr-order]").length`,
+  );
+  const ocrChunksAfterRecognition = networkRequests.filter((request) =>
+    ocrChunkFileNames.some((fileName) => request.url.endsWith(fileName)),
+  );
+  const externalOcrRequests = networkRequests.filter((request) =>
+    request.url.includes("cdn.jsdelivr.net"),
+  );
+  const ocrScreenshot = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    fromSurface: true,
+  });
+  const ocrScreenshotPath = join(artifactDirectory, "ocr-selection.png");
+  await writeFile(
+    ocrScreenshotPath,
+    Buffer.from(ocrScreenshot.data, "base64"),
+  );
+
+  await evaluate(`(() => {
+    const firstWord = document.querySelector("[data-ocr-order]");
+    firstWord?.scrollIntoView({ block: "center", inline: "center" });
+    return true;
+  })()`);
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const wordCenters = await evaluate(`(() => {
+    const words = Array.from(document.querySelectorAll("[data-ocr-order]"));
+    const selected = [words[0], words[Math.min(words.length - 1, 5)]];
+    return selected.map((word) => {
+      const rect = word.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    });
+  })()`);
+  for (const point of wordCenters) {
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [
+        {
+          x: point.x,
+          y: point.y,
+          radiusX: 2,
+          radiusY: 2,
+          force: 1,
+        },
+      ],
+    });
+    await cdp.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+  }
+  await waitFor(
+    `document.body.innerText.includes("Aperçu du passage") && !document.body.innerText.includes("0 mot sélectionné")`,
+    "La sélection tactile par deux extrémités n’a pas fonctionné.",
+  );
+  const tactileSelectionWorks = true;
+  const ocrOverlayScreenshot = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    fromSurface: true,
+  });
+  const ocrOverlayScreenshotPath = join(
+    artifactDirectory,
+    "ocr-overlay-selected.png",
+  );
+  await writeFile(
+    ocrOverlayScreenshotPath,
+    Buffer.from(ocrOverlayScreenshot.data, "base64"),
+  );
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.trim() === "Utiliser ce passage"
+    );
+    if (!button) throw new Error("Validation de la sélection introuvable");
+    button.click();
+    return true;
+  })()`);
+  await waitFor(
+    `document.querySelector("#ocr-review-text") !== null`,
+    "L’étape de vérification du passage ne s’est pas affichée.",
+  );
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.includes("Retour à la sélection")
+    );
+    if (!button) throw new Error("Retour à la sélection introuvable");
+    button.click();
+    return true;
+  })()`);
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.includes("Sélectionner dans le texte")
+    );
+    if (!button) throw new Error("Sélection textuelle introuvable");
+    button.click();
+    return true;
+  })()`);
+  const correctedOcrText =
+    "Les mythes organisent les sociétés. La lecture nourrit la pensée.";
+  await setControlValue("#ocr-editable-text", correctedOcrText, "textarea");
+  await evaluate(`(() => {
+    const area = document.querySelector("#ocr-editable-text");
+    area.focus();
+    area.setSelectionRange(0, "Les mythes organisent les sociétés.".length);
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.trim() === "Utiliser la sélection"
+    );
+    if (!button) throw new Error("Utilisation de la sélection introuvable");
+    button.click();
+    return true;
+  })()`);
+  await waitFor(
+    `document.querySelector("#ocr-review-text")?.value.includes("Les mythes organisent les sociétés.")`,
+    "La sélection textuelle de secours n’a pas alimenté la vérification.",
+  );
+  const textualSelectionWorks = true;
   await setControlValue(
-    "#extracted-text",
+    "#ocr-review-text",
     "Les mythes organisent les sociétés.",
     "textarea",
   );
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.trim() === "Ajouter à ma note"
+    );
+    if (!button) throw new Error("Ajout à la note introuvable");
+    button.click();
+    return true;
+  })()`);
+  await waitFor(
+    `document.querySelector("#extracted-text")?.value === "Les mythes organisent les sociétés." && document.body.innerText.includes("Passage extrait depuis une photo")`,
+    "Le passage OCR n’a pas rejoint le formulaire existant.",
+  );
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  const workerTargetsAfterTransfer = (
+    await (
+      await fetch(`http://127.0.0.1:${port}/json/list`)
+    ).json()
+  ).filter((target) => target.type === "worker");
   await setControlValue(
     "#personal-reflection",
     "Comparer cette idée avec nos habitudes.",
@@ -455,6 +770,111 @@ try {
     "La note n’a pas été créée ou comptée.",
   );
   const oneNoteCounts = await readDatabaseCounts();
+  const scannedNote = await readLatestNote();
+  const ocrLanguageMarkerPresent = await evaluate(`(async () => {
+    const cache = await caches.open("brainbook-ocr-metadata-v1");
+    return Boolean(
+      await cache.match(
+        new Request(new URL("/__brainbook_ocr_ready__/fra", location.origin))
+      )
+    );
+  })()`);
+  await navigate(
+    `http://127.0.0.1:3000/books/${notesBookId}/notes/new`,
+  );
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.includes("Scanner une page")
+    );
+    button?.click();
+    return Boolean(button);
+  })()`);
+  await waitFor(
+    `document.querySelector("#scan-library-image") !== null`,
+    "Le second scan de contrôle ne s’est pas ouvert.",
+  );
+  await evaluate(`(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 1000;
+    canvas.height = 1400;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "white";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.fillStyle = "black";
+    context.font = "bold 68px Arial";
+    context.fillText("CACHE OCR HORS LIGNE", 70, 300);
+    context.font = "48px Arial";
+    context.fillText("Le texte reste reconnu.", 70, 420);
+    const blob = await new Promise((resolve) =>
+      canvas.toBlob(resolve, "image/png")
+    );
+    const transfer = new DataTransfer();
+    transfer.items.add(
+      new File([blob], "offline-ocr.png", { type: "image/png" })
+    );
+    const input = document.querySelector("#scan-library-image");
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: transfer.files
+    });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  })()`);
+  await waitFor(
+    `Array.from(document.querySelectorAll("button")).some((button) => button.textContent.includes("Lancer la reconnaissance"))`,
+    "La photo du contrôle hors ligne n’a pas été préparée.",
+    120,
+  );
+  await cdp.send("Network.emulateNetworkConditions", {
+    offline: true,
+    latency: 0,
+    downloadThroughput: -1,
+    uploadThroughput: -1,
+  });
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.includes("Lancer la reconnaissance")
+    );
+    button?.click();
+    return Boolean(button);
+  })()`);
+  let offlineOcrReuse = false;
+  for (let attempt = 0; attempt < 400; attempt += 1) {
+    const offlineState = await evaluate(`({
+      success: document.body.innerText.includes("Sélectionnez votre passage"),
+      failed:
+        document.body.innerText.includes("n’a pas pu être chargé") ||
+        document.body.innerText.includes("Vérifiez votre connexion")
+    })`);
+    if (offlineState.success) {
+      offlineOcrReuse = true;
+      break;
+    }
+    if (offlineState.failed) break;
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  await cdp.send("Network.emulateNetworkConditions", {
+    offline: false,
+    latency: 0,
+    downloadThroughput: -1,
+    uploadThroughput: -1,
+  });
+  await navigate(`http://127.0.0.1:3000/books/${notesBookId}`);
+  await waitFor(
+    `document.querySelector('a[aria-label^="Ouvrir la note"]') !== null`,
+    "La note scannée n’est plus visible après le contrôle hors ligne.",
+  );
+  const imageTransmissionRequests = networkRequests
+    .slice(requestsBeforePhoto)
+    .filter(
+      (request) =>
+        request.hasPostData ||
+        !["GET", "HEAD"].includes(request.method),
+    );
+  const externalRequestsDuringPhotoPreparation =
+    photoPreparationRequests.filter(
+      (request) => new URL(request.url).origin !== "http://127.0.0.1:3000",
+    );
   const notePath = await evaluate(
     `document.querySelector('a[aria-label^="Ouvrir la note"]')?.getAttribute("href")`,
   );
@@ -463,7 +883,7 @@ try {
 
   await navigate(`http://127.0.0.1:3000${notePath}`);
   await waitFor(
-    `document.body.innerText.includes("Les mythes organisent les sociétés.") && document.body.innerText.includes("Comparer cette idée avec nos habitudes.") && document.body.innerText.includes("Anthropologie")`,
+    `document.body.innerText.includes("Les mythes organisent les sociétés.") && document.body.innerText.includes("Comparer cette idée avec nos habitudes.") && document.body.innerText.includes("Anthropologie") && document.body.innerText.includes("Passage extrait depuis une photo")`,
     "Le détail complet de la note ne s’est pas affiché.",
   );
   const noteDetailScreenshot = await cdp.send("Page.captureScreenshot", {
@@ -611,11 +1031,35 @@ try {
       deletedCounts.books === 0 && deletedCounts.images === 0,
     creationWithoutCover:
       placeholderCounts.books === 1 && placeholderCounts.images === 0,
-    scannerStaysDisabled: scannerDisabled,
+    scannerEnabled,
+    cameraCaptureConfigured,
+    languageChoices:
+      JSON.stringify(languageChoices) ===
+      JSON.stringify(["fra", "eng", "pol"]),
+    lazyOcrBundle:
+      ocrChunksBeforeActivation.length === 0 &&
+      ocrChunksBeforeRecognition.length === 0 &&
+      ocrChunksAfterRecognition.length > 0,
+    localPhotoPreparation:
+      externalRequestsDuringPhotoPreparation.length === 0,
+    realOcrProducesWords: recognizedWordCount > 0,
+    tactileSelectionWorks,
+    textualSelectionWorks,
+    noImageTransmission: imageTransmissionRequests.length === 0,
+    ocrAssetsAreReadOnlyDownloads:
+      externalOcrRequests.length > 0 &&
+      externalOcrRequests.every((request) =>
+        ["GET", "HEAD"].includes(request.method),
+      ),
+    languageReadinessCached: ocrLanguageMarkerPresent,
+    offlineOcrReuseAfterPreparation: offlineOcrReuse,
+    workerTerminatedAfterTransfer: workerTargetsAfterTransfer.length === 0,
     noteCreationAndCount:
       oneNoteCounts.books === 1 &&
       oneNoteCounts.notes === 1 &&
-      oneNoteCounts.images === 0,
+      oneNoteCounts.images === 0 &&
+      scannedNote?.sourceType === "scan" &&
+      scannedNote?.sourceImageId === null,
     noteEditPersists: true,
     ideaBookSearchFound,
     combinedIdeaFilterFound,
@@ -632,6 +1076,8 @@ try {
     missingBookState: true,
     detailScreenshot: detailScreenshotPath,
     noteDetailScreenshot: noteDetailScreenshotPath,
+    ocrSelectionScreenshot: ocrScreenshotPath,
+    ocrOverlayScreenshot: ocrOverlayScreenshotPath,
     ideasScreenshot: ideasScreenshotPath,
   };
 
@@ -675,6 +1121,13 @@ try {
         pages: results,
         interactions: interactionChecks,
         browserErrors,
+        networkPrivacy: {
+          ocrChunkFileNames,
+          externalOcrRequestCount: externalOcrRequests.length,
+          imageTransmissionRequestCount: imageTransmissionRequests.length,
+          externalPreparationRequestCount:
+            externalRequestsDuringPhotoPreparation.length,
+        },
         offlineShell: offlineEvaluation.result.value,
         manifest: {
           status: manifestResponse.status,

@@ -2,6 +2,7 @@ export type IconName =
   | "arrow-left"
   | "book"
   | "bookmark"
+  | "camera"
   | "chevron"
   | "close"
   | "edit"
@@ -10,10 +11,15 @@ export type IconName =
   | "more"
   | "note"
   | "plus"
+  | "rotate-left"
+  | "rotate-right"
   | "search"
   | "settings"
+  | "shield"
   | "spark"
-  | "trash";
+  | "trash"
+  | "zoom-in"
+  | "zoom-out";
 
 type IconProps = {
   name: IconName;
@@ -35,6 +41,12 @@ const paths: Record<IconName, React.ReactNode> = {
     </>
   ),
   bookmark: <path d="M6 3.5h12v17l-6-4-6 4z" />,
+  camera: (
+    <>
+      <path d="M4 7h3l1.5-2h7L17 7h3v12H4z" />
+      <circle cx="12" cy="13" r="4" />
+    </>
+  ),
   chevron: <path d="m9 18 6-6-6-6" />,
   close: <path d="M6 6l12 12M18 6 6 18" />,
   edit: (
@@ -70,6 +82,18 @@ const paths: Record<IconName, React.ReactNode> = {
     </>
   ),
   plus: <path d="M12 5v14M5 12h14" />,
+  "rotate-left": (
+    <>
+      <path d="M4 7v5h5" />
+      <path d="M5.5 16a8 8 0 1 0 .4-8.5L4 12" />
+    </>
+  ),
+  "rotate-right": (
+    <>
+      <path d="M20 7v5h-5" />
+      <path d="M18.5 16a8 8 0 1 1-.4-8.5L20 12" />
+    </>
+  ),
   search: (
     <>
       <circle cx="11" cy="11" r="7" />
@@ -82,6 +106,12 @@ const paths: Record<IconName, React.ReactNode> = {
       <path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1.1V21H9.6v-.1A1.7 1.7 0 0 0 8 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 3.6 15a1.7 1.7 0 0 0-1.6-1H2v-4h.1A1.7 1.7 0 0 0 3.6 8a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 8 3.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1.1V2h4v.1A1.7 1.7 0 0 0 15 3.6a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 8a1.7 1.7 0 0 0 .6 1 1.7 1.7 0 0 0 1.1.4h.1v4h-.1a1.7 1.7 0 0 0-1.7 1.6Z" />
     </>
   ),
+  shield: (
+    <>
+      <path d="M12 3 5 6v5c0 4.6 2.8 8 7 10 4.2-2 7-5.4 7-10V6z" />
+      <path d="m9 12 2 2 4-5" />
+    </>
+  ),
   spark: (
     <>
       <path d="m12 3-1.1 3.4a6 6 0 0 1-3.8 3.8L4 11.3l3.1 1.1a6 6 0 0 1 3.8 3.8L12 20l1.1-3.8a6 6 0 0 1 3.8-3.8l3.1-1.1-3.1-1.1a6 6 0 0 1-3.8-3.8z" />
@@ -91,6 +121,18 @@ const paths: Record<IconName, React.ReactNode> = {
   trash: (
     <>
       <path d="M4 7h16M9 11v6M15 11v6M6 7l1 14h10l1-14M9 7V4h6v3" />
+    </>
+  ),
+  "zoom-in": (
+    <>
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="m20 20-4.8-4.8M10.5 7.5v6M7.5 10.5h6" />
+    </>
+  ),
+  "zoom-out": (
+    <>
+      <circle cx="10.5" cy="10.5" r="6.5" />
+      <path d="m20 20-4.8-4.8M7.5 10.5h6" />
     </>
   ),
 };

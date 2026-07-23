@@ -2,7 +2,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Book, BookNote } from "@/domain/models";
+import type {
+  Book,
+  BookNote,
+  NoteSourceType,
+} from "@/domain/models";
 import {
   type NoteFieldErrors,
   type NoteFormValues,
@@ -11,7 +15,9 @@ import {
   validateNote,
   validateTagCandidate,
 } from "@/domain/note-validation";
+import { applyScannedPassage } from "@/domain/note-scan";
 import { BookCover } from "@/components/books/book-cover";
+import { ScanFlow } from "@/components/notes/scan-flow";
 import { TagPill } from "@/components/notes/tag-pill";
 import { BackLink } from "@/components/ui/back-link";
 import { Icon } from "@/components/ui/icon";
@@ -47,6 +53,10 @@ const fieldClassName =
 
 export function NoteForm({ mode, book, note }: NoteFormProps) {
   const router = useRouter();
+  const [entryMode, setEntryMode] = useState<"manual" | "scan">("manual");
+  const [sourceType, setSourceType] = useState<NoteSourceType>(
+    note?.sourceType ?? "manual",
+  );
   const [values, setValues] = useState<NoteFormValues>({
     extractedText: note?.extractedText ?? "",
     personalReflection: note?.personalReflection ?? "",
@@ -110,6 +120,17 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
     }
   };
 
+  const handleScannedPassage = (passage: string) => {
+    const nextDraft = applyScannedPassage(
+      { values, sourceType },
+      passage,
+    );
+    setValues(nextDraft.values);
+    setSourceType(nextDraft.sourceType);
+    setFieldErrors((current) => ({ ...current, content: undefined }));
+    setEntryMode("manual");
+  };
+
   const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (isSaving) return;
@@ -123,7 +144,7 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
 
     try {
       if (mode === "create") {
-        await noteRepository.create(book.id, validation.data);
+        await noteRepository.create(book.id, validation.data, sourceType);
         router.replace(`/books/${book.id}?noteCreated=1`);
         return;
       }
@@ -180,29 +201,62 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
         <section aria-label="Mode d’ajout" className="mt-6 grid grid-cols-2 gap-3">
           <button
             type="button"
-            aria-pressed="true"
-            className="flex min-h-16 flex-col items-center justify-center gap-1.5 rounded-2xl border border-[var(--moss)] bg-[var(--moss-soft)] px-3 py-3 text-xs font-semibold text-[var(--moss)]"
+            aria-pressed={entryMode === "manual"}
+            onClick={() => setEntryMode("manual")}
+            className={`flex min-h-16 flex-col items-center justify-center gap-1.5 rounded-2xl border px-3 py-3 text-xs font-semibold ${
+              entryMode === "manual"
+                ? "border-[var(--moss)] bg-[var(--moss-soft)] text-[var(--moss)]"
+                : "border-[var(--line)] bg-[var(--card)] text-[var(--muted)]"
+            }`}
           >
             <Icon name="edit" size={20} />
             Saisir manuellement
           </button>
           <button
             type="button"
-            disabled
-            aria-disabled="true"
-            className="flex min-h-16 flex-col items-center justify-center gap-1 rounded-2xl border border-[var(--line)] bg-[var(--card)] px-3 py-2 text-xs font-semibold text-[var(--muted)] opacity-75"
+            aria-pressed={entryMode === "scan"}
+            onClick={() => setEntryMode("scan")}
+            className={`flex min-h-16 flex-col items-center justify-center gap-1 rounded-2xl border px-3 py-2 text-xs font-semibold ${
+              entryMode === "scan"
+                ? "border-[var(--moss)] bg-[var(--moss-soft)] text-[var(--moss)]"
+                : "border-[var(--line)] bg-[var(--card)] text-[var(--muted)]"
+            }`}
           >
-            <Icon name="image" size={19} />
+            <Icon name="camera" size={19} />
             Scanner une page
-            <span className="text-[0.58rem] font-normal">Prochainement</span>
+            <span className="text-[0.58rem] font-normal">OCR sur l’appareil</span>
           </button>
         </section>
       ) : null}
 
+      {mode === "create" && entryMode === "scan" ? (
+        <ScanFlow
+          onPassageReady={handleScannedPassage}
+          onExitToManual={() => setEntryMode("manual")}
+        />
+      ) : (
       <form onSubmit={handleSubmit} noValidate className="mt-7 space-y-6">
         {formError ? <StatusMessage tone="error">{formError}</StatusMessage> : null}
         {fieldErrors.content ? (
           <StatusMessage tone="error">{fieldErrors.content}</StatusMessage>
+        ) : null}
+
+        {sourceType === "scan" ? (
+          <div className="rounded-2xl border border-[var(--line)] bg-[var(--moss-soft)] p-4">
+            <div className="flex items-center gap-2 text-sm font-semibold text-[var(--moss)]">
+              <Icon name="camera" size={18} />
+              Passage extrait depuis une photo
+            </div>
+            {mode === "create" ? (
+              <button
+                type="button"
+                onClick={() => setEntryMode("scan")}
+                className="mt-2 min-h-11 text-xs font-semibold text-[var(--moss)]"
+              >
+                Recommencer le scan ou remplacer ce passage
+              </button>
+            ) : null}
+          </div>
         ) : null}
 
         <div>
@@ -361,6 +415,7 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
               : "Enregistrer les modifications"}
         </button>
       </form>
+      )}
     </div>
   );
 }

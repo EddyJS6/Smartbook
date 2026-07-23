@@ -199,6 +199,13 @@ export function NoteDetailClient() {
         </div>
       </section>
 
+      {note.sourceType === "scan" ? (
+        <div className="mt-5 flex items-center gap-2 rounded-2xl bg-[var(--moss-soft)] px-4 py-3 text-xs font-semibold text-[var(--moss)]">
+          <Icon name="camera" size={17} />
+          Passage extrait depuis une photo
+        </div>
+      ) : null}
+
       {note.extractedText ? (
         <article className="mt-7 rounded-[1.8rem] border border-[var(--line)] bg-[var(--card)] p-6">
           <p className="text-[0.68rem] font-bold tracking-[0.12em] text-[var(--clay)] uppercase">
