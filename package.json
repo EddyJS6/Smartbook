@@ -8,10 +8,12 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "icons": "node scripts/generate-icons.mjs",
     "smoke:mobile": "node scripts/mobile-smoke.mjs"
   },
   "dependencies": {
+    "dexie": "4.4.4",
     "next": "16.2.11",
     "react": "19.2.8",
     "react-dom": "19.2.8"
@@ -23,9 +25,11 @@
     "@types/react-dom": "19.2.3",
     "eslint": "9.39.5",
     "eslint-config-next": "16.2.11",
+    "fake-indexeddb": "6.2.5",
     "tailwindcss": "4.3.3",
     "typescript": "5.9.3",
-    "typescript-eslint": "8.46.0"
+    "typescript-eslint": "8.46.0",
+    "vitest": "4.1.10"
   },
   "overrides": {
     "postcss": "8.5.22",

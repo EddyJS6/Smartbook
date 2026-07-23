@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Icon } from "@/components/ui/icon";
 
 export function EmptyLibraryState() {
@@ -12,6 +13,13 @@ export function EmptyLibraryState() {
       <p className="balance mx-auto mt-2 max-w-xs text-sm leading-6 text-[var(--muted)]">
         Les livres que vous ajouterez apparaîtront ici, prêts à accueillir vos notes.
       </p>
+      <Link
+        href="/books/new"
+        className="mt-6 inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-[var(--moss)] px-5 py-3 text-sm font-semibold text-white"
+      >
+        <Icon name="plus" size={18} />
+        Ajouter mon premier livre
+      </Link>
     </div>
   );
 }

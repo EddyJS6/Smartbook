@@ -25,7 +25,9 @@ export function BottomNavigation() {
       <div className="grid grid-cols-3 rounded-[1.35rem] border border-white/80 bg-[rgb(255_253_249_/_0.94)] p-1.5 shadow-[0_8px_30px_rgb(47_41_34_/_0.14)] backdrop-blur-xl">
         {navigationItems.map((item) => {
           const active =
-            item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+            item.href === "/"
+              ? pathname === "/" || pathname.startsWith("/books")
+              : pathname.startsWith(item.href);
 
           return (
             <Link

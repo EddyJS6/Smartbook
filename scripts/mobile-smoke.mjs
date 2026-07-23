@@ -146,6 +146,90 @@ try {
     screenHeight: 844,
   });
 
+  const evaluate = async (expression) => {
+    const result = await cdp.send("Runtime.evaluate", {
+      expression,
+      awaitPromise: true,
+      returnByValue: true,
+    });
+
+    if (result.exceptionDetails) {
+      throw new Error(result.exceptionDetails.text);
+    }
+
+    return result.result.value;
+  };
+
+  const waitFor = async (expression, message) => {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      if (await evaluate(expression)) return;
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+
+    throw new Error(message);
+  };
+
+  const navigate = async (url) => {
+    await cdp.send("Page.navigate", { url });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  };
+
+  const setControlValue = async (selector, value, elementType = "input") => {
+    await evaluate(`(() => {
+      const element = document.querySelector(${JSON.stringify(selector)});
+      if (!element) throw new Error("Champ introuvable");
+      const prototype = ${
+        elementType === "select"
+          ? "HTMLSelectElement.prototype"
+          : "HTMLInputElement.prototype"
+      };
+      const setter = Object.getOwnPropertyDescriptor(prototype, "value").set;
+      setter.call(element, ${JSON.stringify(value)});
+      element.dispatchEvent(new Event("input", { bubbles: true }));
+      element.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    })()`);
+  };
+
+  const click = async (selector) => {
+    await evaluate(`(() => {
+      const element = document.querySelector(${JSON.stringify(selector)});
+      if (!element) throw new Error("Élément introuvable");
+      element.click();
+      return true;
+    })()`);
+  };
+
+  const setFile = async (selector, filePath) => {
+    const documentNode = await cdp.send("DOM.getDocument");
+    const inputNode = await cdp.send("DOM.querySelector", {
+      nodeId: documentNode.root.nodeId,
+      selector,
+    });
+    if (!inputNode.nodeId) throw new Error("Champ fichier introuvable");
+    await cdp.send("DOM.setFileInputFiles", {
+      nodeId: inputNode.nodeId,
+      files: [filePath],
+    });
+  };
+
+  const readDatabaseCounts = () =>
+    evaluate(`new Promise((resolve, reject) => {
+      const request = indexedDB.open("brainbook");
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const database = request.result;
+        const transaction = database.transaction(["books", "images"], "readonly");
+        const booksRequest = transaction.objectStore("books").count();
+        const imagesRequest = transaction.objectStore("images").count();
+        transaction.oncomplete = () => resolve({
+          books: booksRequest.result,
+          images: imagesRequest.result
+        });
+        transaction.onerror = () => reject(transaction.error);
+      };
+    })`);
+
   const routes = [
     { name: "library", url: "http://127.0.0.1:3000/" },
     { name: "ideas", url: "http://127.0.0.1:3000/ideas" },
@@ -154,8 +238,7 @@ try {
   const results = [];
 
   for (const route of routes) {
-    await cdp.send("Page.navigate", { url: route.url });
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    await navigate(route.url);
 
     const evaluation = await cdp.send("Runtime.evaluate", {
       expression: `(async () => ({
@@ -183,6 +266,163 @@ try {
       ...evaluation.result.value,
     });
   }
+
+  await navigate("http://127.0.0.1:3000/");
+  await waitFor(
+    `document.body.innerText.includes("Votre bibliothèque commence ici")`,
+    "L’état vide ne s’est pas affiché.",
+  );
+  const emptyCounts = await readDatabaseCounts();
+
+  await click('a[href="/books/new"]');
+  await waitFor(
+    `location.pathname === "/books/new"`,
+    "La page d’ajout ne s’est pas ouverte.",
+  );
+  await click('button[type="submit"]');
+  await waitFor(
+    `document.body.innerText.includes("Indiquez le titre du livre") && document.body.innerText.includes("Indiquez le nom de l’auteur")`,
+    "La validation obligatoire ne s’est pas affichée.",
+  );
+
+  await setControlValue("#title", "  Le Petit Prince  ");
+  await setControlValue("#author", " Antoine de Saint-Exupéry ");
+  await setFile(
+    "#cover-image",
+    join(process.cwd(), "public", "icons", "icon-512.png"),
+  );
+  await waitFor(
+    `document.querySelector('img[alt="Prévisualisation de la couverture"]') !== null`,
+    "La couverture n’a pas été prévisualisée.",
+  );
+  await click('button[type="submit"]');
+  await waitFor(
+    `location.pathname.startsWith("/books/") && document.body.innerText.includes("Le livre a bien été ajouté")`,
+    "Le livre avec couverture n’a pas été créé.",
+  );
+  const createdBookId = await evaluate(
+    `location.pathname.split("/").filter(Boolean)[1]`,
+  );
+  const createdCounts = await readDatabaseCounts();
+
+  const detailScreenshot = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    fromSurface: true,
+  });
+  const detailScreenshotPath = join(artifactDirectory, "book-detail.png");
+  await writeFile(
+    detailScreenshotPath,
+    Buffer.from(detailScreenshot.data, "base64"),
+  );
+
+  await navigate("http://127.0.0.1:3000/");
+  await cdp.send("Page.reload");
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await waitFor(
+    `document.body.innerText.includes("Le Petit Prince")`,
+    "Le livre n’a pas persisté après actualisation.",
+  );
+  await navigate("about:blank");
+  await navigate("http://127.0.0.1:3000/");
+  await waitFor(
+    `document.body.innerText.includes("Le Petit Prince")`,
+    "Le livre n’a pas persisté après réouverture.",
+  );
+
+  await setControlValue('input[type="search"]', "  PETIT PRINCE ");
+  const titleSearchFound = await evaluate(
+    `document.body.innerText.includes("Le Petit Prince")`,
+  );
+  await setControlValue('input[type="search"]', "saint-exupéry");
+  const authorSearchFound = await evaluate(
+    `document.body.innerText.includes("Le Petit Prince")`,
+  );
+  await setControlValue('input[type="search"]', "introuvable");
+  const noResultVisible = await evaluate(
+    `document.body.innerText.includes("Aucun livre trouvé")`,
+  );
+
+  await navigate(
+    `http://127.0.0.1:3000/books/${createdBookId}/edit`,
+  );
+  await waitFor(
+    `document.querySelector("#title")?.value === "Le Petit Prince"`,
+    "Le formulaire d’édition n’a pas été prérempli.",
+  );
+  await setControlValue("#title", "Le Petit Prince — édition");
+  await setControlValue("#status", "finished", "select");
+  await setFile(
+    "#cover-image",
+    join(process.cwd(), "public", "icons", "icon-192.png"),
+  );
+  await waitFor(
+    `document.querySelector('img[alt="Prévisualisation de la couverture"]') !== null`,
+    "La couverture de remplacement n’a pas été prévisualisée.",
+  );
+  await click('button[type="submit"]');
+  await waitFor(
+    `location.pathname === "/books/${createdBookId}" && document.body.innerText.includes("Les modifications ont bien été enregistrées")`,
+    "Les modifications n’ont pas été enregistrées.",
+  );
+  await cdp.send("Page.reload");
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await waitFor(
+    `document.body.innerText.includes("Le Petit Prince — édition") && document.body.innerText.includes("TERMINÉ")`,
+    "Les modifications n’ont pas persisté.",
+  );
+  const replacedCoverCounts = await readDatabaseCounts();
+
+  await evaluate(`window.confirm = () => true`);
+  const deleteSelector = `Array.from(document.querySelectorAll("button")).find((button) => button.textContent.includes("Supprimer le livre"))`;
+  await evaluate(`(() => {
+    const button = ${deleteSelector};
+    if (!button) throw new Error("Action de suppression introuvable");
+    button.click();
+    return true;
+  })()`);
+  await waitFor(
+    `location.pathname === "/" && document.body.innerText.includes("Votre bibliothèque commence ici")`,
+    "La suppression n’a pas restauré l’état vide.",
+  );
+  const deletedCounts = await readDatabaseCounts();
+
+  await navigate("http://127.0.0.1:3000/books/new");
+  await setControlValue("#title", "Sapiens");
+  await setControlValue("#author", "Yuval Noah Harari");
+  await click('button[type="submit"]');
+  await waitFor(
+    `location.pathname.startsWith("/books/") && document.body.innerText.includes("Sapiens")`,
+    "Le livre sans couverture n’a pas été créé.",
+  );
+  const placeholderCounts = await readDatabaseCounts();
+
+  const missingId = "00000000-0000-4000-8000-000000000000";
+  await navigate(`http://127.0.0.1:3000/books/${missingId}`);
+  await waitFor(
+    `document.body.innerText.includes("Livre introuvable")`,
+    "L’état livre introuvable ne s’est pas affiché.",
+  );
+
+  const interactionChecks = {
+    emptyLibrary: emptyCounts.books === 0 && emptyCounts.images === 0,
+    requiredValidation: true,
+    coverPreview: true,
+    creationWithCover:
+      createdCounts.books === 1 && createdCounts.images === 1,
+    persistenceAfterReload: true,
+    persistenceAfterReopen: true,
+    titleSearchFound,
+    authorSearchFound,
+    noResultVisible,
+    editAndCoverReplacement:
+      replacedCoverCounts.books === 1 && replacedCoverCounts.images === 1,
+    deletionCleansImage:
+      deletedCounts.books === 0 && deletedCounts.images === 0,
+    creationWithoutCover:
+      placeholderCounts.books === 1 && placeholderCounts.images === 0,
+    missingBookState: true,
+    detailScreenshot: detailScreenshotPath,
+  };
 
   const offlineEvaluation = await cdp.send("Runtime.evaluate", {
     expression: `(async () => {
@@ -222,6 +462,7 @@ try {
       {
         viewport: "390x844",
         pages: results,
+        interactions: interactionChecks,
         browserErrors,
         offlineShell: offlineEvaluation.result.value,
         manifest: {

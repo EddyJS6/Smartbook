@@ -1,0 +1,123 @@
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import type { PreparedImage } from "@/domain/models";
+import { BrainBookDatabase } from "@/storage/database";
+import { BookRepository } from "@/storage/repositories/book-repository";
+
+describe("BookRepository", () => {
+  let database: BrainBookDatabase;
+  let repository: BookRepository;
+
+  beforeEach(() => {
+    database = new BrainBookDatabase(`brainbook-test-${crypto.randomUUID()}`);
+    repository = new BookRepository(database);
+  });
+
+  afterEach(async () => {
+    database.close();
+    await database.delete();
+  });
+
+  const image: PreparedImage = {
+    blob: new Blob(["cover"], { type: "image/jpeg" }),
+    mimeType: "image/jpeg",
+    width: 600,
+    height: 900,
+  };
+
+  it("crée et relit un livre avec sa couverture séparée", async () => {
+    const created = await repository.create(
+      {
+        title: "  Le livre test  ",
+        author: "  Ada Lovelace ",
+        status: "to_read",
+      },
+      image,
+    );
+
+    expect(created.title).toBe("Le livre test");
+    expect(created.author).toBe("Ada Lovelace");
+    expect(created.coverImageId).not.toBeNull();
+    expect(await database.books.count()).toBe(1);
+    expect(await database.images.count()).toBe(1);
+    expect(await repository.get(created.id)).toEqual(created);
+  });
+
+  it("modifie un livre sans modifier sa date de création", async () => {
+    const created = await repository.create({
+      title: "Titre initial",
+      author: "Auteur initial",
+      status: "to_read",
+    });
+
+    const updated = await repository.update(created.id, {
+      title: "Titre modifié",
+      author: "Auteur initial",
+      status: "finished",
+    });
+
+    expect(updated?.title).toBe("Titre modifié");
+    expect(updated?.status).toBe("finished");
+    expect(updated?.createdAt).toBe(created.createdAt);
+  });
+
+  it("remplace une couverture sans laisser l’ancienne image", async () => {
+    const created = await repository.create(
+      {
+        title: "Livre illustré",
+        author: "Une autrice",
+        status: "reading",
+      },
+      image,
+    );
+    const oldImageId = created.coverImageId;
+
+    const updated = await repository.update(
+      created.id,
+      {
+        title: created.title,
+        author: created.author,
+        status: created.status,
+      },
+      {
+        kind: "replace",
+        image: {
+          ...image,
+          blob: new Blob(["replacement"], { type: "image/jpeg" }),
+        },
+      },
+    );
+
+    expect(updated?.coverImageId).not.toBe(oldImageId);
+    expect(await database.images.count()).toBe(1);
+    expect(oldImageId && (await database.images.get(oldImageId))).toBeUndefined();
+  });
+
+  it("supprime le livre et sa couverture", async () => {
+    const created = await repository.create(
+      {
+        title: "Livre à supprimer",
+        author: "Un auteur",
+        status: "to_read",
+      },
+      image,
+    );
+
+    expect(await repository.delete(created.id)).toBe(true);
+    expect(await database.books.count()).toBe(0);
+    expect(await database.images.count()).toBe(0);
+  });
+
+  it("gère un livre inexistant sans exception", async () => {
+    const missingId = "00000000-0000-4000-8000-000000000000";
+
+    expect(await repository.get(missingId)).toBeUndefined();
+    expect(
+      await repository.update(missingId, {
+        title: "Absent",
+        author: "Personne",
+        status: "to_read",
+      }),
+    ).toBeUndefined();
+    expect(await repository.delete(missingId)).toBe(false);
+  });
+});
