@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   detectPage: vi.fn(),
   rectifyPage: vi.fn(),
   prepareOcrImage: vi.fn(),
+  recognizePageWithAi: vi.fn(),
 }));
 
 vi.mock("@/services/document-processing-service", () => ({
@@ -27,10 +28,11 @@ vi.mock("@/lib/ocr-image-processing", () => ({
   prepareOcrImage: mocks.prepareOcrImage,
 }));
 
-vi.mock("@/services/ocr-service", () => ({
-  OcrServiceError: class OcrServiceError extends Error {},
-  BrowserOcrSession: class BrowserOcrSession {},
-  isOcrLanguagePrepared: vi.fn().mockResolvedValue(false),
+vi.mock("@/services/ai-recognition-service", () => ({
+  AiRecognitionError: class AiRecognitionError extends Error {
+    code = "recognition_failed";
+  },
+  recognizePageWithAi: mocks.recognizePageWithAi,
 }));
 
 function deferred<T>() {
@@ -84,6 +86,15 @@ describe("ScanFlow document adjustment", () => {
       sourceCorners: fallbackPageCorners(),
       wasAutomaticallyDetected: false,
       mode: "original",
+    });
+    mocks.recognizePageWithAi.mockResolvedValue({
+      text: "Les mythes organisent les sociétés.",
+      model: "gpt-5.4-mini-2026-03-17",
+      processingDurationMs: 800,
+      usage: {
+        inputTokens: 900,
+        outputTokens: 12,
+      },
     });
     container = document.createElement("div");
     document.body.append(container);
@@ -175,5 +186,58 @@ describe("ScanFlow document adjustment", () => {
     expect(mocks.rectifyPage).toHaveBeenCalledOnce();
     expect(document.body.textContent).toContain("Comparer avant et après");
     expect(document.querySelector('img[alt="Page redressée"]')).toBeTruthy();
+  });
+
+  it("envoie la page préparée à l’IA puis affiche le texte éditable", async () => {
+    mocks.detectPage.mockResolvedValue({
+      status: "detected",
+      corners: fallbackPageCorners(),
+      processingWidth: 900,
+      processingHeight: 1_200,
+      warning: "La page a été détectée.",
+      photographWarnings: [],
+    });
+    act(() =>
+      root.render(
+        <ScanFlow onPassageReady={vi.fn()} onExitToManual={vi.fn()} />,
+      ),
+    );
+    const input = document.querySelector("#scan-library-image");
+    const file = new File(["image"], "page.jpg", { type: "image/jpeg" });
+    Object.defineProperty(input, "files", {
+      configurable: true,
+      value: { 0: file, length: 1, item: () => file },
+    });
+    await act(async () => {
+      input?.dispatchEvent(new Event("change", { bubbles: true }));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      button("Redresser la page").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      button("Utiliser la page redressée").click();
+      await Promise.resolve();
+    });
+    await act(async () => {
+      button("Lancer la reconnaissance IA").click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(mocks.recognizePageWithAi).toHaveBeenCalledWith(
+      expect.any(Blob),
+      "fra",
+      expect.any(AbortSignal),
+    );
+    expect(
+      document.querySelector("#ai-recognized-text"),
+    ).toHaveProperty(
+      "value",
+      "Les mythes organisent les sociétés.",
+    );
   });
 });

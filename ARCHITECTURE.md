@@ -91,21 +91,39 @@ La couverture source est limitée à 15 Mo et à 40 mégapixels pour protéger l
 
 L’affichage récupère le Blob seulement lorsque nécessaire, crée une Object URL, puis la révoque au démontage ou au changement de couverture. Sans image, un placeholder déterministe est généré visuellement à partir du titre et de l’auteur, sans persistance supplémentaire.
 
-## OCR local et parcours scanner
+## Reconnaissance IA et parcours scanner
 
-BrainBook utilise **Tesseract.js 7.0.0** pour reconnaître localement le texte d’une page. Le module est importé dynamiquement par `BrowserOcrSession` uniquement après une action explicite sur l’écran de scan. Il n’est ni importé pendant le rendu serveur, ni chargé par la bibliothèque ou la page « Mes idées ».
+La reconnaissance locale Tesseract a été retirée. BrainBook utilise l’API
+**Responses d’OpenAI** avec le modèle économique figé
+`gpt-5.4-mini-2026-03-17`. Le modèle accepte une image en entrée et renvoie du
+texte. Le niveau `detail: "high"` préserve les détails nécessaires aux pages
+denses sans utiliser le coût supérieur d’un grand modèle. La variable serveur
+optionnelle `OPENAI_OCR_MODEL` permet un changement contrôlé sans exposer le
+modèle au client.
 
-Tesseract s’exécute dans son Web Worker. Une session possède au maximum un worker :
+Le navigateur envoie un `FormData` à la route Next.js `POST /api/ocr`. Cette
+route :
 
-- le worker est réutilisé pour les analyses successives dans la même langue ;
-- changer de langue termine le worker courant avant d’en créer un autre ;
-- annuler invalide l’identifiant d’opération, termine le worker et ignore tout résultat tardif ;
-- quitter le scan ou démonter le composant termine également le worker ;
-- aucun scheduler multi-worker n’est utilisé.
+- refuse les requêtes dont l’origine ne correspond pas au déploiement ;
+- accepte uniquement JPEG, PNG, WEBP ou GIF ;
+- limite l’image à 8 Mo et le multipart à 11 Mo ;
+- applique une limite conservatrice de huit requêtes par dix minutes et par
+  adresse IP dans chaque instance ;
+- transforme temporairement l’image en data URL pour la requête OpenAI ;
+- demande une transcription fidèle sans résumé, correction, traduction ou
+  obéissance aux instructions visibles dans l’image ;
+- utilise `store: false` et renvoie toujours `Cache-Control: no-store` ;
+- ne renvoie jamais la clé API ni le contenu d’une erreur amont sensible.
 
-Les langues proposées sont le français (`fra`), l’anglais (`eng`) et le polonais (`pol`), une seule à la fois. Le français est sélectionné par défaut. Le worker et le cœur WebAssembly utilisent les chemins cohérents avec les versions installées calculés par Tesseract.js ; aucune URL versionnée n’est recopiée dans le code BrainBook. Sans `langPath` personnalisé, Tesseract.js récupère le modèle choisi depuis `@tesseract.js-data/<lang>/4.0.0_best_int` sur jsDelivr, le décompresse puis le met en cache dans IndexedDB. BrainBook conserve dans Cache Storage un simple marqueur technique après une préparation réussie afin d’éviter de lancer hors ligne une langue jamais téléchargée. Ce marqueur ne contient ni photo ni texte.
+`OPENAI_API_KEY` existe uniquement dans l’environnement serveur Vercel. Elle ne
+doit jamais être préfixée par `NEXT_PUBLIC_`. Une annulation interrompt le fetch
+du navigateur et l’appel serveur possède un délai maximal de 55 secondes.
+L’absence de clé, la limite API, le hors-ligne et les erreurs temporaires sont
+présentés sans perdre la photo préparée.
 
-Le cache du modèle améliore les analyses suivantes. Un premier chargement exige une connexion. Une utilisation totalement hors ligne après ce premier chargement dépend aussi de la disponibilité du worker et du cœur WebAssembly dans le cache HTTP du navigateur ; elle doit donc être vérifiée sur chaque version de Safari et n’est pas présentée comme une garantie absolue.
+Les langues proposées restent le français (`fra`), l’anglais (`eng`) et le
+polonais (`pol`). Elles servent d’indication au modèle et non au téléchargement
+d’un modèle local. La reconnaissance IA nécessite toujours Internet.
 
 ## Détection et redressement de page
 
@@ -137,7 +155,7 @@ Un aperçu avant/après est présenté avant l’OCR. Toute rotation ou toute mo
 
 Le service worker ne précache pas les quelque 11 Mo d’OpenCV. Il met en cache à la demande le worker et la ressource versionnée après leur première utilisation. Ainsi, un premier scan nécessite le réseau si ce cache n’existe pas ; les scans suivants peuvent réutiliser OpenCV hors ligne. Une mise à jour de version ou d’empreinte impose un nouveau chemin versionné ou un nouveau nom de cache.
 
-## Pipeline d’image OCR
+## Pipeline d’image avant reconnaissance IA
 
 La photo reste temporaire et côté client :
 
@@ -150,32 +168,22 @@ La photo reste temporaire et côté client :
 7. redimensionnement proportionnel sans agrandissement, avec un grand côté OCR limité à **2 400 px** ;
 8. export temporaire JPEG de qualité 0,90, utilisé à la fois pour l’aperçu et l’OCR.
 
-Ces limites offrent des caractères suffisamment détaillés tout en évitant de traiter simultanément plusieurs photos iPhone pleine résolution. Le code ne conserve qu’une référence au fichier choisi et les Blobs temporaires nécessaires à l’étape courante. Les `ImageBitmap`, canvases, anciens Blobs, buffers transférés et Object URLs sont fermés, réduits, remplacés ou révoqués dès qu’ils ne sont plus utiles. OpenCV et Tesseract travaillent successivement, jamais en parallèle dans le parcours normal.
+Ces limites offrent des caractères suffisamment détaillés tout en évitant de traiter simultanément plusieurs photos iPhone pleine résolution. Le code ne conserve qu’une référence au fichier choisi et les Blobs temporaires nécessaires à l’étape courante. Les `ImageBitmap`, canvases, anciens Blobs, buffers transférés et Object URLs sont fermés, réduits, remplacés ou révoqués dès qu’ils ne sont plus utiles. OpenCV termine avant l’envoi de la page préparée à la reconnaissance IA.
 
 HEIC/HEIF fonctionne uniquement lorsque Safari peut le décoder nativement. Aucune bibliothèque lourde de conversion n’est ajoutée ; un échec propose de reprendre la photo ou d’utiliser un JPEG.
 
-## Modèle OCR interne
+## Sélection du passage reconnu
 
-Les composants ne dépendent pas de la structure brute de Tesseract. Le domaine expose :
+Le modèle renvoie une transcription textuelle, sans boîtes de mots. Cette
+décision supprime l’alignement fragile entre l’image et les coordonnées d’un
+OCR classique. L’utilisateur peut afficher la photo préparée pour comparaison,
+corriger librement le texte dans un `textarea`, sélectionner une plage avec la
+sélection native iOS ou utiliser l’intégralité du texte.
 
-- `OcrBoundingBox` pour les coordonnées `x0`, `y0`, `x1`, `y1` ;
-- `OcrWord` pour le texte, la confiance, la boîte, les indices structurels et l’ordre stable ;
-- `OcrLine` pour les mots, le texte, la boîte et sa position structurelle ;
-- `OcrResult` pour le texte intégral, les mots, les lignes, les dimensions, la confiance moyenne, la langue et la durée.
-
-L’appel `worker.recognize` active explicitement les sorties `text` et `blocks`, désactivées par défaut dans les versions récentes. La transformation parcourt blocs, paragraphes, lignes puis mots. Elle ignore les mots vides mais conserve ceux de faible confiance. Un résultat partiel contenant du texte sans blocs reste utilisable par la sélection textuelle de secours.
-
-## Sélection et reconstruction du passage
-
-Sur la photo, chaque mot est superposé en pourcentage des dimensions de l’image OCR. L’image et la couche partagent le même conteneur et le même facteur de zoom (100 %, 150 % ou 200 %), ce qui maintient l’alignement lors du redimensionnement. Les Pointer Events gèrent doigt, souris et stylet sans placer chaque mot dans l’ordre de tabulation.
-
-La sélection est une plage `startOrder` / `endOrder`. Elle accepte le glissement avec capture du pointeur, `pointercancel`, la sélection en sens inverse, ou deux touchers successifs sur le premier et le dernier mot. Les événements de mouvement ne changent React que lorsque le mot réellement survolé change. Les actions permettent d’effacer, de tout sélectionner, de recommencer ou d’utiliser le passage.
-
-Trois modes sont proposés : `Mots`, `Lignes` et `Texte`. En mode lignes, un premier puis un second toucher sélectionnent l’intervalle de lignes correspondant ; la recherche de la ligne la plus proche tolère un léger décalage autour des boîtes OCR. Changer de mode conserve les corrections textuelles déjà effectuées.
-
-La reconstruction trie les mots par ordre de lecture, conserve un saut de ligne entre lignes et deux entre paragraphes ou blocs. Elle retire l’espace avant les ponctuations fermantes et rattache correctement apostrophes et traits d’union, sans modifier les données OCR originales.
-
-L’alternative « Sélectionner dans le texte » est toujours disponible. Elle permet de corriger le texte, d’utiliser `selectionStart` / `selectionEnd` du `textarea`, ou de choisir explicitement tout le texte. Elle couvre l’accessibilité et les cas où les boîtes sont absentes ou mal alignées.
+Le texte visible dans la photo est explicitement traité comme une donnée à
+transcrire, jamais comme une instruction. L’IA doit utiliser `[illisible]`
+plutôt que d’inventer un passage. Une étape de vérification reste obligatoire,
+car un modèle vision peut encore omettre ou confondre un mot.
 
 Après sélection, une étape de vérification conserve un passage entièrement éditable. « Ajouter à ma note » remplit le même `extractedText` que la saisie manuelle, conserve réflexion, page et tags, puis marque le brouillon `sourceType: "scan"`.
 
@@ -183,9 +191,9 @@ Après sélection, une étape de vérification conserve un passage entièrement 
 
 Le scanner utilise le formulaire et `NoteRepository.create` existants. Une note scannée est enregistrée avec `sourceType: "scan"` et `sourceImageId: null`. Le schéma IndexedDB v2 ne change donc pas.
 
-La photographie n’est jamais envoyée à une route Next.js, une API OCR ou un service distant, et elle n’est jamais inscrite dans IndexedDB. Seuls le worker, le cœur WebAssembly et le modèle de langue sont susceptibles d’être téléchargés. Après enregistrement ou abandon, le fichier, le Blob préparé, les Object URLs et le worker sont libérés.
+La photographie n’est jamais inscrite dans IndexedDB. Après une action explicite, la page préparée est envoyée temporairement à la route Vercel puis à l’API OpenAI. BrainBook ne la stocke ni dans sa base, ni dans Cache Storage, ni dans les logs applicatifs. Après enregistrement ou abandon, le fichier, le Blob préparé et les Object URLs sont libérés.
 
-Ne pas conserver les photos protège la confidentialité des pages complètes, réduit fortement le stockage mobile et simplifie une future synchronisation. Le champ `sourceImageId` reste réservé à une éventuelle option volontaire ultérieure.
+Les données envoyées à l’API OpenAI ne servent pas à entraîner les modèles par défaut, sauf consentement explicite du titulaire du compte. Les journaux de surveillance des abus peuvent cependant contenir des données client pendant une durée pouvant aller jusqu’à 30 jours selon les contrôles du compte OpenAI. Le champ `sourceImageId` reste `null`.
 
 ## Compatibilité iPhone
 
@@ -209,10 +217,10 @@ Les UUID locaux seront aussi les identifiants distants. `updatedAt` permettra pl
 
 ## Limites actuelles
 
-La détection et le redressement corrigent une page globalement plane ; ils ne déforment pas localement une page incurvée près de la reliure. Un fort reflet, un faible contraste, une page partiellement masquée ou un fond de couleur proche peut exiger de replacer les coins manuellement. Une perspective extrême peut rester imparfaite. La photo originale, la sélection par lignes et la sélection textuelle éditable servent toujours de secours.
+La détection et le redressement corrigent une page globalement plane ; ils ne déforment pas localement une page incurvée près de la reliure. Un fort reflet, un faible contraste, une page partiellement masquée ou un fond de couleur proche peut exiger de replacer les coins manuellement. Une perspective extrême peut rester imparfaite. La photo originale et la transcription textuelle éditable servent toujours de secours.
 
 Il n’y a ni scan multipage, ni import PDF, ni détection automatique de langue.
 
-Il n’y a toujours ni authentification ni synchronisation distante. Les suppressions sont donc définitives sur l’appareil et les confirmations l’indiquent explicitement.
+Il n’y a toujours ni authentification ni synchronisation distante. La route payante est donc protégée seulement par l’origine, des limites de taille et une limite de fréquence par instance. Un déploiement publiquement connu doit ajouter une règle Vercel de rate limiting et une limite de dépense OpenAI stricte. Les suppressions sont définitives sur l’appareil et les confirmations l’indiquent explicitement.
 
 Le service worker gère le shell, les routes visitées, les ressources statiques et les ressources techniques OpenCV/OCR téléchargées à la demande. Les données métier IndexedDB et les photos de page ne sont ni mises en cache par le service worker ni synchronisées à distance.

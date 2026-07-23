@@ -14,8 +14,6 @@ import type {
 import type {
   OcrImageMode,
   OcrLanguage,
-  OcrProgress,
-  OcrResult,
   ScanStage,
 } from "@/domain/ocr-types";
 import { OCR_LANGUAGES } from "@/domain/ocr-types";
@@ -35,11 +33,11 @@ import {
 import { OpenCvLoadError } from "@/services/opencv-loader";
 import { terminateOpenCvWorker } from "@/services/opencv-worker-client";
 import {
-  BrowserOcrSession,
-  OcrServiceError,
-  isOcrLanguagePrepared,
-} from "@/services/ocr-service";
-import { OcrWordSelector } from "@/components/notes/ocr-word-selector";
+  AiRecognitionError,
+  recognizePageWithAi,
+  type AiRecognitionResult,
+} from "@/services/ai-recognition-service";
+import { AiTextSelector } from "@/components/notes/ai-text-selector";
 import { PageCornerEditor } from "@/components/notes/page-corner-editor";
 import { Icon } from "@/components/ui/icon";
 import { StatusMessage } from "@/components/ui/status-message";
@@ -65,7 +63,7 @@ function reportScanError(error: unknown): string {
   }
   if (
     error instanceof OcrImageError ||
-    error instanceof OcrServiceError ||
+    error instanceof AiRecognitionError ||
     error instanceof DocumentProcessingError ||
     error instanceof OpenCvLoadError
   ) {
@@ -106,32 +104,20 @@ export function ScanFlow({
   const [rotation, setRotation] = useState(0);
   const [imageMode, setImageMode] = useState<OcrImageMode>("original");
   const [language, setLanguage] = useState<OcrLanguage>("fra");
-  const [languagePrepared, setLanguagePrepared] = useState(false);
-  const [progress, setProgress] = useState<OcrProgress | null>(null);
-  const [result, setResult] = useState<OcrResult | null>(null);
+  const [result, setResult] = useState<AiRecognitionResult | null>(null);
   const [reviewText, setReviewText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [settingsChanged, setSettingsChanged] = useState(false);
   const fileRef = useRef<File | null>(null);
-  const sessionRef = useRef<BrowserOcrSession | null>(null);
   const mountedRef = useRef(true);
   const preparationIdRef = useRef(0);
   const detectionIdRef = useRef(0);
   const recognitionIdRef = useRef(0);
   const documentAbortRef = useRef<AbortController | null>(null);
+  const recognitionAbortRef = useRef<AbortController | null>(null);
   const sourceUrl = useTemporaryObjectUrl(sourceImage?.blob ?? null);
   const previewUrl = useTemporaryObjectUrl(preparedImage?.blob ?? null);
-
-  useEffect(() => {
-    void isOcrLanguagePrepared(language)
-      .then((prepared) => {
-        if (mountedRef.current) setLanguagePrepared(prepared);
-      })
-      .catch(() => {
-        if (mountedRef.current) setLanguagePrepared(false);
-      });
-  }, [language]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -142,33 +128,17 @@ export function ScanFlow({
       recognitionIdRef.current += 1;
       documentAbortRef.current?.abort();
       documentAbortRef.current = null;
+      recognitionAbortRef.current?.abort();
+      recognitionAbortRef.current = null;
       fileRef.current = null;
       terminateOpenCvWorker();
-      void sessionRef.current?.terminate();
-      sessionRef.current = null;
     };
   }, []);
 
-  const getSession = () => {
-    if (!sessionRef.current) {
-      sessionRef.current = new BrowserOcrSession((nextProgress) => {
-        if (!mountedRef.current) return;
-        setProgress(nextProgress);
-        if (nextProgress.phase === "recognition") {
-          setStage("recognizing");
-        } else if (
-          nextProgress.phase === "engine" ||
-          nextProgress.phase === "language"
-        ) {
-          setStage("loadingOcrEngine");
-        }
-      });
-    }
-    return sessionRef.current;
-  };
-
   const invalidateRecognition = () => {
     recognitionIdRef.current += 1;
+    recognitionAbortRef.current?.abort();
+    recognitionAbortRef.current = null;
     setResult(null);
     setReviewText("");
     setReviewError(null);
@@ -408,34 +378,32 @@ export function ScanFlow({
     }
 
     const recognitionId = ++recognitionIdRef.current;
+    recognitionAbortRef.current?.abort();
+    const controller = new AbortController();
+    recognitionAbortRef.current = controller;
     setError(null);
-    setProgress({
-      phase: "engine",
-      label: "Chargement du moteur de reconnaissance",
-      progress: null,
-    });
-    setStage("loadingOcrEngine");
+    setStage("sendingToAi");
 
     try {
-      const nextResult = await getSession().recognize(
+      const nextResult = await recognizePageWithAi(
         image.blob,
         language,
-        { width: image.width, height: image.height },
+        controller.signal,
       );
       if (
         !mountedRef.current ||
-        recognitionId !== recognitionIdRef.current
+        recognitionId !== recognitionIdRef.current ||
+        controller.signal.aborted
       ) {
         return;
       }
-      if (!nextResult.fullText.trim()) {
+      if (!nextResult.text.trim()) {
         setError("Aucun texte n’a pu être détecté sur cette image.");
         setStage("readyForOcr");
         return;
       }
 
       setResult(nextResult);
-      setLanguagePrepared(true);
       setSettingsChanged(false);
       setStage("selection");
     } catch (failure) {
@@ -446,13 +414,17 @@ export function ScanFlow({
         return;
       }
       if (
-        failure instanceof OcrServiceError &&
+        failure instanceof AiRecognitionError &&
         failure.code === "cancelled"
       ) {
         return;
       }
       setError(reportScanError(failure));
       setStage("readyForOcr");
+    } finally {
+      if (recognitionAbortRef.current === controller) {
+        recognitionAbortRef.current = null;
+      }
     }
   };
 
@@ -460,8 +432,8 @@ export function ScanFlow({
     documentAbortRef.current?.abort();
     documentAbortRef.current = null;
     recognitionIdRef.current += 1;
-    setProgress(null);
-    await sessionRef.current?.cancel();
+    recognitionAbortRef.current?.abort();
+    recognitionAbortRef.current = null;
     if (!mountedRef.current) return;
     if (stage === "rectifyingPage") setStage("adjustingPage");
     else setStage(preparedImage ? "readyForOcr" : "adjustingPage");
@@ -512,18 +484,16 @@ export function ScanFlow({
     setResult(null);
     setReviewText("");
     setError(null);
-    setProgress(null);
     setSettingsChanged(false);
     setRotation(0);
     setImageMode("original");
     setStage("idle");
-    void sessionRef.current?.terminate();
-    sessionRef.current = null;
+    recognitionAbortRef.current?.abort();
+    recognitionAbortRef.current = null;
     terminateOpenCvWorker();
   };
 
-  const isOcrProcessing =
-    stage === "loadingOcrEngine" || stage === "recognizing";
+  const isOcrProcessing = stage === "sendingToAi";
 
   return (
     <section className="mt-6 space-y-5" aria-label="Scanner une page">
@@ -533,9 +503,9 @@ export function ScanFlow({
             <Icon name="shield" size={19} />
           </span>
           <p className="text-xs leading-5 text-[var(--muted)]">
-            La reconnaissance est effectuée sur cet appareil, tout comme la
-            détection et le redressement. La photo de la page n’est pas envoyée
-            à un serveur.
+            La détection et le redressement restent sur cet appareil. Pour la
+            reconnaissance, la page préparée est envoyée temporairement à
+            OpenAI, puis seul le texte choisi est enregistré dans BrainBook.
           </p>
         </div>
       </div>
@@ -775,18 +745,17 @@ export function ScanFlow({
               ))}
             </select>
           </div>
-          {!languagePrepared ? (
-            <p className="rounded-2xl bg-[var(--paper-deep)] p-4 text-xs leading-5 text-[var(--muted)]">
-              La première analyse dans cette langue peut prendre plus de temps,
-              car son modèle doit être préparé.
-            </p>
-          ) : null}
+          <p className="rounded-2xl bg-[var(--paper-deep)] p-4 text-xs leading-5 text-[var(--muted)]">
+            Une connexion Internet est nécessaire. La page préparée sera
+            transmise à OpenAI pour être convertie en texte et ne sera pas
+            conservée dans BrainBook.
+          </p>
           <button
             type="button"
             onClick={() => void runRecognition()}
             className="min-h-13 w-full rounded-2xl bg-[var(--moss)] px-5 py-3 text-sm font-semibold text-white"
           >
-            Lancer la reconnaissance
+            Lancer la reconnaissance IA
           </button>
           <button
             type="button"
@@ -812,29 +781,18 @@ export function ScanFlow({
           aria-live="polite"
           className="rounded-3xl border border-[var(--line)] bg-[var(--card)] p-5"
         >
-          <p className="font-semibold">
-            {progress?.label ?? "Préparation du moteur"}
+          <p className="font-semibold">Reconnaissance IA en cours</p>
+          <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
+            La page est transmise de façon sécurisée et convertie en texte.
+            Cela peut prendre quelques secondes.
           </p>
-          {progress?.progress !== null && progress?.progress !== undefined ? (
-            <>
-              <div
-                role="progressbar"
-                aria-label={progress.label}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(progress.progress * 100)}
-                className="mt-4 h-2 overflow-hidden rounded-full bg-[var(--paper-deep)]"
-              >
-                <div
-                  className="h-full rounded-full bg-[var(--moss)] transition-[width]"
-                  style={{ width: `${Math.round(progress.progress * 100)}%` }}
-                />
-              </div>
-              <p className="mt-2 text-right text-xs text-[var(--muted)]">
-                {Math.round(progress.progress * 100)} %
-              </p>
-            </>
-          ) : null}
+          <div
+            role="progressbar"
+            aria-label="Reconnaissance IA en cours"
+            className="mt-4 h-2 overflow-hidden rounded-full bg-[var(--paper-deep)]"
+          >
+            <div className="h-full w-1/2 animate-pulse rounded-full bg-[var(--moss)]" />
+          </div>
           <button
             type="button"
             onClick={() => void cancelProcessing()}
@@ -890,22 +848,23 @@ export function ScanFlow({
           {settingsChanged ? (
             <div className="rounded-2xl bg-[var(--paper-deep)] p-4">
               <p className="text-xs leading-5 text-[var(--muted)]">
-                Le résultat affiché reste celui en{" "}
-                {languageLabels[result.language]}. Relancez l’OCR pour appliquer
-                les nouveaux réglages.
+                Le résultat affiché utilise encore les réglages précédents.
+                Relancez la reconnaissance IA pour appliquer le{" "}
+                {languageLabels[language].toLocaleLowerCase("fr")} et la
+                nouvelle préparation d’image.
               </p>
               <button
                 type="button"
                 onClick={() => void reanalyzeWithSettings()}
                 className="mt-2 min-h-11 text-sm font-semibold text-[var(--moss)]"
               >
-                Relancer l’analyse
+                Relancer la reconnaissance IA
               </button>
             </div>
           ) : null}
-          <OcrWordSelector
+          <AiTextSelector
             imageUrl={previewUrl}
-            result={result}
+            initialText={result.text}
             onPassageSelected={openReview}
             onRestart={restartFromSelection}
           />

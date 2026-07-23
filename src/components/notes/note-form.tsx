@@ -224,7 +224,7 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
           >
             <Icon name="camera" size={19} />
             Scanner une page
-            <span className="text-[0.58rem] font-normal">OCR sur l’appareil</span>
+            <span className="text-[0.58rem] font-normal">Reconnaissance IA</span>
           </button>
         </section>
       ) : null}

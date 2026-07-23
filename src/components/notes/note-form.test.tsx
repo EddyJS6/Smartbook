@@ -69,7 +69,7 @@ describe("NoteForm scan mode", () => {
     expect(libraryInput).toBeInstanceOf(HTMLInputElement);
     expect(libraryInput?.hasAttribute("capture")).toBe(false);
     expect(document.body.textContent).toContain(
-      "La reconnaissance est effectuée sur cet appareil",
+      "la page préparée est envoyée temporairement à OpenAI",
     );
   });
 

@@ -109,7 +109,7 @@ const artifactDirectory = join(process.cwd(), ".next", "smoke");
 await mkdir(profileDirectory, { recursive: true });
 await mkdir(artifactDirectory, { recursive: true });
 const chunkDirectory = join(process.cwd(), ".next", "static", "chunks");
-const ocrChunkFileNames = [];
+const legacyTesseractChunkFileNames = [];
 for (const fileName of await readdir(chunkDirectory)) {
   if (!fileName.endsWith(".js")) continue;
   const source = await readFile(join(chunkDirectory, fileName), "utf8");
@@ -117,7 +117,7 @@ for (const fileName of await readdir(chunkDirectory)) {
     source.includes("recognizing text") ||
     source.includes("tesseract.js-core")
   ) {
-    ocrChunkFileNames.push(fileName);
+    legacyTesseractChunkFileNames.push(fileName);
   }
 }
 
@@ -140,8 +140,16 @@ try {
   await cdp.ready;
 
   const browserErrors = [];
-  const ocrEngineWarnings = [];
   const networkRequests = [];
+  let mockedAiRequestCount = 0;
+  await cdp.send("Fetch.enable", {
+    patterns: [
+      {
+        urlPattern: "*://127.0.0.1:3000/api/ocr",
+        requestStage: "Request",
+      },
+    ],
+  });
   cdp.onMessage((message) => {
     if (message.method === "Runtime.exceptionThrown") {
       browserErrors.push(message.params.exceptionDetails.text);
@@ -150,15 +158,33 @@ try {
       message.method === "Log.entryAdded" &&
       message.params.entry.level === "error"
     ) {
-      const entryText = message.params.entry.text;
-      if (
-        entryText.includes("Image too small to scale") ||
-        entryText.includes("Line cannot be recognized")
-      ) {
-        ocrEngineWarnings.push(entryText);
-      } else {
-        browserErrors.push(entryText);
-      }
+      browserErrors.push(message.params.entry.text);
+    }
+    if (
+      message.method === "Fetch.requestPaused" &&
+      message.params.request.url.endsWith("/api/ocr")
+    ) {
+      mockedAiRequestCount += 1;
+      void cdp.send("Fetch.fulfillRequest", {
+        requestId: message.params.requestId,
+        responseCode: 200,
+        responseHeaders: [
+          { name: "content-type", value: "application/json" },
+          { name: "cache-control", value: "no-store" },
+        ],
+        body: Buffer.from(
+          JSON.stringify({
+            text:
+              "Les mythes organisent les sociétés.\\n\\nLa lecture nourrit la pensée.\\nChaque idée ouvre un chemin.",
+            model: "gpt-5.4-mini-2026-03-17",
+            processingDurationMs: 900,
+            usage: {
+              inputTokens: 1200,
+              outputTokens: 40,
+            },
+          }),
+        ).toString("base64"),
+      });
     }
     if (message.method === "Network.requestWillBeSent") {
       const request = message.params.request;
@@ -511,9 +537,6 @@ try {
     `Array.from(document.querySelectorAll("button")).some((button) => !button.disabled && button.textContent.includes("Scanner une page"))`,
   );
   console.log("[smoke] scanner ouvert");
-  const ocrChunksBeforeActivation = networkRequests.filter((request) =>
-    ocrChunkFileNames.some((fileName) => request.url.endsWith(fileName)),
-  );
   const opencvRequestsBeforeActivation = networkRequests.filter((request) =>
     request.url.includes("/vendor/opencv/4.13.0/opencv.js"),
   );
@@ -526,7 +549,7 @@ try {
     return true;
   })()`);
   await waitFor(
-    `document.querySelector("#scan-camera-image") !== null && document.body.innerText.includes("La reconnaissance est effectuée sur cet appareil")`,
+    `document.querySelector("#scan-camera-image") !== null && document.body.innerText.includes("envoyée temporairement à OpenAI")`,
     "Le mode scanner ne s’est pas activé.",
   );
   const cameraCaptureConfigured = await evaluate(
@@ -727,30 +750,24 @@ try {
   await setControlValue("#ocr-language", "eng", "select");
   await setControlValue("#ocr-language", "fra", "select");
   const photoPreparationRequests = networkRequests.slice(requestsBeforePhoto);
-  const ocrChunksBeforeRecognition = networkRequests.filter((request) =>
-    ocrChunkFileNames.some((fileName) => request.url.endsWith(fileName)),
-  );
   await evaluate(`(() => {
     const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.includes("Lancer la reconnaissance")
+      (candidate) => candidate.textContent.includes("Lancer la reconnaissance IA")
     );
-    if (!button) throw new Error("Lancement OCR introuvable");
+    if (!button) throw new Error("Lancement de la reconnaissance IA introuvable");
     button.click();
     return true;
   })()`);
   await waitFor(
-    `document.body.innerText.includes("Sélectionnez votre passage")`,
-    "Le véritable OCR local n’a pas produit de texte sélectionnable.",
-    800,
+    `document.querySelector("#ai-recognized-text") !== null`,
+    "La reconnaissance IA simulée n’a pas produit de texte éditable.",
+    200,
   );
-  const recognizedWordCount = await evaluate(
-    `document.querySelectorAll("[data-ocr-order]").length`,
-  );
-  const ocrChunksAfterRecognition = networkRequests.filter((request) =>
-    ocrChunkFileNames.some((fileName) => request.url.endsWith(fileName)),
-  );
-  const externalOcrRequests = networkRequests.filter((request) =>
-    request.url.includes("cdn.jsdelivr.net"),
+  const aiRequestObserved = networkRequests.some(
+    (request) =>
+      request.url.endsWith("/api/ocr") &&
+      request.method === "POST" &&
+      request.hasPostData,
   );
   const ocrScreenshot = await cdp.send("Page.captureScreenshot", {
     format: "png",
@@ -762,139 +779,11 @@ try {
     Buffer.from(ocrScreenshot.data, "base64"),
   );
 
-  await evaluate(`(() => {
-    const button = Array.from(document.querySelectorAll('[role="tab"]')).find(
-      (candidate) => candidate.textContent.trim() === "Lignes"
-    );
-    button?.click();
-    return Boolean(button);
-  })()`);
-  await waitFor(
-    `document.querySelector('img[alt="Page analysée avec lignes sélectionnables"]') !== null`,
-    "Le mode de sélection par lignes ne s’est pas affiché.",
-  );
-  await evaluate(`(() => {
-    const image = document.querySelector('img[alt="Page analysée avec lignes sélectionnables"]');
-    const line = image?.nextElementSibling?.querySelector("span");
-    line?.scrollIntoView({ block: "center", inline: "center" });
-    return Boolean(line);
-  })()`);
-  await new Promise((resolve) => setTimeout(resolve, 250));
-  const firstLineCenter = await evaluate(`(() => {
-    const image = document.querySelector('img[alt="Page analysée avec lignes sélectionnables"]');
-    const overlay = image?.nextElementSibling;
-    const line = overlay?.querySelector("span");
-    const rect = line?.getBoundingClientRect();
-    return rect ? { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 } : null;
-  })()`);
-  if (!firstLineCenter) throw new Error("Ligne OCR tactile introuvable.");
-  await cdp.send("Input.dispatchTouchEvent", {
-    type: "touchStart",
-    touchPoints: [{ ...firstLineCenter, radiusX: 4, radiusY: 4, force: 1 }],
-  });
-  await cdp.send("Input.dispatchTouchEvent", {
-    type: "touchEnd",
-    touchPoints: [],
-  });
-  await waitFor(
-    `document.body.innerText.includes("Aperçu du passage") && !document.body.innerText.includes("0 mot sélectionné")`,
-    "La sélection par lignes n’a pas fonctionné.",
-  );
-  const lineSelectionWorks = true;
-  await evaluate(`(() => {
-    const clear = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.trim() === "Effacer la sélection"
-    );
-    clear?.click();
-    const words = Array.from(document.querySelectorAll('[role="tab"]')).find(
-      (candidate) => candidate.textContent.trim() === "Mots"
-    );
-    words?.click();
-    return Boolean(words);
-  })()`);
-
-  await evaluate(`(() => {
-    const firstWord = document.querySelector("[data-ocr-order]");
-    firstWord?.scrollIntoView({ block: "center", inline: "center" });
-    return true;
-  })()`);
-  await new Promise((resolve) => setTimeout(resolve, 250));
-  const wordCenters = await evaluate(`(() => {
-    const words = Array.from(document.querySelectorAll("[data-ocr-order]"));
-    const selected = [words[0], words[Math.min(words.length - 1, 5)]];
-    return selected.map((word) => {
-      const rect = word.getBoundingClientRect();
-      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-    });
-  })()`);
-  for (const point of wordCenters) {
-    await cdp.send("Input.dispatchTouchEvent", {
-      type: "touchStart",
-      touchPoints: [
-        {
-          x: point.x,
-          y: point.y,
-          radiusX: 2,
-          radiusY: 2,
-          force: 1,
-        },
-      ],
-    });
-    await cdp.send("Input.dispatchTouchEvent", {
-      type: "touchEnd",
-      touchPoints: [],
-    });
-  }
-  await waitFor(
-    `document.body.innerText.includes("Aperçu du passage") && !document.body.innerText.includes("0 mot sélectionné")`,
-    "La sélection tactile par deux extrémités n’a pas fonctionné.",
-  );
-  const tactileSelectionWorks = true;
-  const ocrOverlayScreenshot = await cdp.send("Page.captureScreenshot", {
-    format: "png",
-    fromSurface: true,
-  });
-  const ocrOverlayScreenshotPath = join(
-    artifactDirectory,
-    "ocr-overlay-selected.png",
-  );
-  await writeFile(
-    ocrOverlayScreenshotPath,
-    Buffer.from(ocrOverlayScreenshot.data, "base64"),
-  );
-  await evaluate(`(() => {
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.trim() === "Utiliser ce passage"
-    );
-    if (!button) throw new Error("Validation de la sélection introuvable");
-    button.click();
-    return true;
-  })()`);
-  await waitFor(
-    `document.querySelector("#ocr-review-text") !== null`,
-    "L’étape de vérification du passage ne s’est pas affichée.",
-  );
-  await evaluate(`(() => {
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.includes("Retour à la sélection")
-    );
-    if (!button) throw new Error("Retour à la sélection introuvable");
-    button.click();
-    return true;
-  })()`);
-  await evaluate(`(() => {
-    const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.getAttribute("role") === "tab" && candidate.textContent.trim() === "Texte"
-    );
-    if (!button) throw new Error("Sélection textuelle introuvable");
-    button.click();
-    return true;
-  })()`);
   const correctedOcrText =
     "Les mythes organisent les sociétés. La lecture nourrit la pensée.";
-  await setControlValue("#ocr-editable-text", correctedOcrText, "textarea");
+  await setControlValue("#ai-recognized-text", correctedOcrText, "textarea");
   await evaluate(`(() => {
-    const area = document.querySelector("#ocr-editable-text");
+    const area = document.querySelector("#ai-recognized-text");
     area.focus();
     area.setSelectionRange(0, "Les mythes organisent les sociétés.".length);
     const button = Array.from(document.querySelectorAll("button")).find(
@@ -906,9 +795,10 @@ try {
   })()`);
   await waitFor(
     `document.querySelector("#ocr-review-text")?.value.includes("Les mythes organisent les sociétés.")`,
-    "La sélection textuelle de secours n’a pas alimenté la vérification.",
+    "La sélection du texte IA n’a pas alimenté la vérification.",
   );
-  const textualSelectionWorks = true;
+  const aiTextSelectionWorks = true;
+  const aiCorrectionWorks = true;
   await setControlValue(
     "#ocr-review-text",
     "Les mythes organisent les sociétés.",
@@ -924,7 +814,7 @@ try {
   })()`);
   await waitFor(
     `document.querySelector("#extracted-text")?.value === "Les mythes organisent les sociétés." && document.body.innerText.includes("Passage extrait depuis une photo")`,
-    "Le passage OCR n’a pas rejoint le formulaire existant.",
+    "Le passage reconnu par l’IA n’a pas rejoint le formulaire existant.",
   );
   await new Promise((resolve) => setTimeout(resolve, 500));
   const workerTargetsAfterTransfer = (
@@ -963,14 +853,6 @@ try {
   );
   const oneNoteCounts = await readDatabaseCounts();
   const scannedNote = await readLatestNote();
-  const ocrLanguageMarkerPresent = await evaluate(`(async () => {
-    const cache = await caches.open("brainbook-ocr-metadata-v1");
-    return Boolean(
-      await cache.match(
-        new Request(new URL("/__brainbook_ocr_ready__/fra", location.origin))
-      )
-    );
-  })()`);
   const openCvAssetCached = await evaluate(`(async () =>
     Boolean(await caches.match("/vendor/opencv/4.13.0/opencv.js"))
   )()`);
@@ -1003,7 +885,7 @@ try {
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.fillStyle = "black";
     context.font = "bold 68px Arial";
-    context.fillText("CACHE OCR HORS LIGNE", 70, 300);
+    context.fillText("RECONNAISSANCE HORS LIGNE", 70, 300);
     context.font = "48px Arial";
     context.fillText("Le texte reste reconnu.", 70, 420);
     const blob = await new Promise((resolve) =>
@@ -1045,31 +927,22 @@ try {
   })()`);
   await waitFor(
     `Array.from(document.querySelectorAll("button")).some((button) => button.textContent.includes("Lancer la reconnaissance"))`,
-    "Le secours sans redressement n’a pas préparé l’OCR hors ligne.",
+    "Le secours sans redressement n’a pas préparé la page hors ligne.",
     200,
   );
   await evaluate(`(() => {
     const button = Array.from(document.querySelectorAll("button")).find(
-      (candidate) => candidate.textContent.includes("Lancer la reconnaissance")
+      (candidate) => candidate.textContent.includes("Lancer la reconnaissance IA")
     );
     button?.click();
     return Boolean(button);
   })()`);
-  let offlineOcrReuse = false;
-  for (let attempt = 0; attempt < 400; attempt += 1) {
-    const offlineState = await evaluate(`({
-      success: document.body.innerText.includes("Sélectionnez votre passage"),
-      failed:
-        document.body.innerText.includes("n’a pas pu être chargé") ||
-        document.body.innerText.includes("Vérifiez votre connexion")
-    })`);
-    if (offlineState.success) {
-      offlineOcrReuse = true;
-      break;
-    }
-    if (offlineState.failed) break;
-    await new Promise((resolve) => setTimeout(resolve, 150));
-  }
+  await waitFor(
+    `document.body.innerText.includes("reconnaissance IA nécessite une connexion Internet")`,
+    "Le mode hors ligne n’a pas expliqué que la reconnaissance IA nécessite Internet.",
+    100,
+  );
+  const offlineAiBlockedCleanly = true;
   await cdp.send("Network.emulateNetworkConditions", {
     offline: false,
     latency: 0,
@@ -1081,12 +954,22 @@ try {
     `document.querySelector('a[aria-label^="Ouvrir la note"]') !== null`,
     "La note scannée n’est plus visible après le contrôle hors ligne.",
   );
-  const imageTransmissionRequests = networkRequests
+  const apiOcrRequests = networkRequests
     .slice(requestsBeforePhoto)
     .filter(
       (request) =>
-        request.hasPostData ||
-        !["GET", "HEAD"].includes(request.method),
+        request.url.endsWith("/api/ocr") &&
+        request.method === "POST" &&
+        request.hasPostData,
+    );
+  const directExternalImageRequests = networkRequests
+    .slice(requestsBeforePhoto)
+    .filter(
+      (request) =>
+        /^https?:/i.test(request.url) &&
+        new URL(request.url).origin !== "http://127.0.0.1:3000" &&
+        (request.hasPostData ||
+          !["GET", "HEAD"].includes(request.method)),
     );
   const externalRequestsDuringPhotoPreparation =
     photoPreparationRequests.filter(
@@ -1264,24 +1147,18 @@ try {
     languageChoices:
       JSON.stringify(languageChoices) ===
       JSON.stringify(["fra", "eng", "pol"]),
-    lazyOcrBundle:
-      ocrChunksBeforeActivation.length === 0 &&
-      ocrChunksBeforeRecognition.length === 0 &&
-      ocrChunksAfterRecognition.length > 0,
+    tesseractRemoved: legacyTesseractChunkFileNames.length === 0,
     localPhotoPreparation:
       externalRequestsDuringPhotoPreparation.length === 0,
-    realOcrProducesWords: recognizedWordCount > 0,
-    tactileSelectionWorks,
-    lineSelectionWorks,
-    textualSelectionWorks,
-    noImageTransmission: imageTransmissionRequests.length === 0,
-    ocrAssetsAreReadOnlyDownloads:
-      externalOcrRequests.length > 0 &&
-      externalOcrRequests.every((request) =>
-        ["GET", "HEAD"].includes(request.method),
-      ),
-    languageReadinessCached: ocrLanguageMarkerPresent,
-    offlineOcrReuseAfterPreparation: offlineOcrReuse,
+    aiRouteCalledOnce:
+      mockedAiRequestCount === 1 &&
+      aiRequestObserved &&
+      apiOcrRequests.length === 1,
+    aiTextSelectionWorks,
+    aiCorrectionWorks,
+    noDirectBrowserUploadToThirdParty:
+      directExternalImageRequests.length === 0,
+    offlineAiBlockedCleanly,
     workerTerminatedAfterTransfer: workerTargetsAfterTransfer.length === 0,
     noteCreationAndCount:
       oneNoteCounts.books === 1 &&
@@ -1305,8 +1182,7 @@ try {
     missingBookState: true,
     detailScreenshot: detailScreenshotPath,
     noteDetailScreenshot: noteDetailScreenshotPath,
-    ocrSelectionScreenshot: ocrScreenshotPath,
-    ocrOverlayScreenshot: ocrOverlayScreenshotPath,
+    aiSelectionScreenshot: ocrScreenshotPath,
     adjustmentScreenshot: adjustmentScreenshotPath,
     ideasScreenshot: ideasScreenshotPath,
   };
@@ -1351,11 +1227,11 @@ try {
         pages: results,
         interactions: interactionChecks,
         browserErrors,
-        ocrEngineWarnings,
         networkPrivacy: {
-          ocrChunkFileNames,
-          externalOcrRequestCount: externalOcrRequests.length,
-          imageTransmissionRequestCount: imageTransmissionRequests.length,
+          legacyTesseractChunkFileNames,
+          localAiUploadRequestCount: apiOcrRequests.length,
+          directExternalImageRequestCount:
+            directExternalImageRequests.length,
           externalPreparationRequestCount:
             externalRequestsDuringPhotoPreparation.length,
           externalPreparationUrls:
