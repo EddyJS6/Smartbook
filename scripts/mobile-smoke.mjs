@@ -181,6 +181,8 @@ try {
       const prototype = ${
         elementType === "select"
           ? "HTMLSelectElement.prototype"
+          : elementType === "textarea"
+            ? "HTMLTextAreaElement.prototype"
           : "HTMLInputElement.prototype"
       };
       const setter = Object.getOwnPropertyDescriptor(prototype, "value").set;
@@ -219,12 +221,14 @@ try {
       request.onerror = () => reject(request.error);
       request.onsuccess = () => {
         const database = request.result;
-        const transaction = database.transaction(["books", "images"], "readonly");
+        const transaction = database.transaction(["books", "images", "bookNotes"], "readonly");
         const booksRequest = transaction.objectStore("books").count();
         const imagesRequest = transaction.objectStore("images").count();
+        const notesRequest = transaction.objectStore("bookNotes").count();
         transaction.oncomplete = () => resolve({
           books: booksRequest.result,
-          images: imagesRequest.result
+          images: imagesRequest.result,
+          notes: notesRequest.result
         });
         transaction.onerror = () => reject(transaction.error);
       };
@@ -395,6 +399,193 @@ try {
     "Le livre sans couverture n’a pas été créé.",
   );
   const placeholderCounts = await readDatabaseCounts();
+  const notesBookId = await evaluate(
+    `location.pathname.split("/").filter(Boolean)[1]`,
+  );
+
+  await waitFor(
+    `document.body.innerText.includes("Aucune note pour le moment")`,
+    "L’état vide des notes ne s’est pas affiché.",
+  );
+  await click(`a[href="/books/${notesBookId}/notes/new"]`);
+  await waitFor(
+    `location.pathname === "/books/${notesBookId}/notes/new"`,
+    "Le formulaire de note ne s’est pas ouvert.",
+  );
+  const scannerDisabled = await evaluate(
+    `Array.from(document.querySelectorAll("button")).some((button) => button.disabled && button.textContent.includes("Scanner une page"))`,
+  );
+  await click('button[type="submit"]');
+  await waitFor(
+    `document.body.innerText.includes("Ajoutez au moins un passage")`,
+    "La validation d’une note vide ne s’est pas affichée.",
+  );
+  await setControlValue(
+    "#extracted-text",
+    "Les mythes organisent les sociétés.",
+    "textarea",
+  );
+  await setControlValue(
+    "#personal-reflection",
+    "Comparer cette idée avec nos habitudes.",
+    "textarea",
+  );
+  await setControlValue("#page-number", "Chapitre 2");
+  await setControlValue("#tag-input", "Anthropologie");
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.trim() === "Ajouter"
+    );
+    if (!button) throw new Error("Bouton Ajouter introuvable");
+    button.click();
+    return true;
+  })()`);
+  await setControlValue("#tag-input", "anthropologie");
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.trim() === "Ajouter"
+    );
+    if (!button) throw new Error("Bouton Ajouter introuvable");
+    button.click();
+    return true;
+  })()`);
+  await click('button[type="submit"]');
+  await waitFor(
+    `location.pathname === "/books/${notesBookId}" && document.body.innerText.includes("La note a bien été ajoutée") && document.body.innerText.includes("1 note")`,
+    "La note n’a pas été créée ou comptée.",
+  );
+  const oneNoteCounts = await readDatabaseCounts();
+  const notePath = await evaluate(
+    `document.querySelector('a[aria-label^="Ouvrir la note"]')?.getAttribute("href")`,
+  );
+  if (!notePath) throw new Error("Le lien vers la note créée est introuvable.");
+  const noteId = notePath.split("/").filter(Boolean)[3];
+
+  await navigate(`http://127.0.0.1:3000${notePath}`);
+  await waitFor(
+    `document.body.innerText.includes("Les mythes organisent les sociétés.") && document.body.innerText.includes("Comparer cette idée avec nos habitudes.") && document.body.innerText.includes("Anthropologie")`,
+    "Le détail complet de la note ne s’est pas affiché.",
+  );
+  const noteDetailScreenshot = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    fromSurface: true,
+  });
+  const noteDetailScreenshotPath = join(
+    artifactDirectory,
+    "note-detail.png",
+  );
+  await writeFile(
+    noteDetailScreenshotPath,
+    Buffer.from(noteDetailScreenshot.data, "base64"),
+  );
+  await navigate(`http://127.0.0.1:3000${notePath}/edit`);
+  await waitFor(
+    `document.querySelector("#personal-reflection")?.value.includes("nos habitudes")`,
+    "Le formulaire de modification de la note n’est pas prérempli.",
+  );
+  await setControlValue(
+    "#personal-reflection",
+    "Une action concrète à tester demain.",
+    "textarea",
+  );
+  await click('button[type="submit"]');
+  await waitFor(
+    `location.pathname === "${notePath}" && document.body.innerText.includes("Les modifications de la note ont bien été enregistrées")`,
+    "La modification de la note n’a pas été enregistrée.",
+  );
+  await cdp.send("Page.reload");
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  await waitFor(
+    `document.body.innerText.includes("Une action concrète à tester demain.")`,
+    "La modification de la note n’a pas persisté.",
+  );
+
+  await navigate("http://127.0.0.1:3000/ideas");
+  await waitFor(
+    `document.body.innerText.includes("1 note conservée") && document.body.innerText.includes("Sapiens")`,
+    "La vue globale Mes idées n’a pas joint la note à son livre.",
+  );
+  await setControlValue('input[type="search"]', "  SAPIENS ");
+  const ideaBookSearchFound = await evaluate(
+    `document.body.innerText.includes("Les mythes organisent les sociétés.")`,
+  );
+  await setControlValue('input[type="search"]', "mythes");
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.trim() === "Anthropologie"
+    );
+    if (!button) throw new Error("Filtre de tag introuvable");
+    button.click();
+    return true;
+  })()`);
+  const combinedIdeaFilterFound = await evaluate(
+    `document.body.innerText.includes("Les mythes organisent les sociétés.")`,
+  );
+  await setControlValue('input[type="search"]', "introuvable");
+  const ideaNoResultVisible = await evaluate(
+    `document.body.innerText.includes("Aucune idée trouvée")`,
+  );
+  const ideasScreenshot = await cdp.send("Page.captureScreenshot", {
+    format: "png",
+    fromSurface: true,
+  });
+  const ideasScreenshotPath = join(artifactDirectory, "ideas-filtered.png");
+  await writeFile(
+    ideasScreenshotPath,
+    Buffer.from(ideasScreenshot.data, "base64"),
+  );
+
+  await navigate(`http://127.0.0.1:3000${notePath}`);
+  await click('summary[aria-label="Actions de la note"]');
+  await evaluate(`window.confirm = () => true`);
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.includes("Supprimer la note")
+    );
+    if (!button) throw new Error("Action de suppression de note introuvable");
+    button.click();
+    return true;
+  })()`);
+  await waitFor(
+    `location.pathname === "/books/${notesBookId}" && document.body.innerText.includes("La note a été supprimée") && document.body.innerText.includes("0 note")`,
+    "La suppression de la note n’a pas restauré son état vide.",
+  );
+  const deletedNoteCounts = await readDatabaseCounts();
+
+  await navigate(`http://127.0.0.1:3000/books/${notesBookId}/notes/new`);
+  await setControlValue(
+    "#personal-reflection",
+    "Une réflexion sans passage pour tester la saisie libre.",
+    "textarea",
+  );
+  await click('button[type="submit"]');
+  await waitFor(
+    `location.pathname === "/books/${notesBookId}" && document.body.innerText.includes("1 note")`,
+    "La note composée uniquement d’une réflexion n’a pas été créée.",
+  );
+  const beforeCascadeCounts = await readDatabaseCounts();
+  await evaluate(`window.confirm = () => true`);
+  await evaluate(`(() => {
+    const button = Array.from(document.querySelectorAll("button")).find(
+      (candidate) => candidate.textContent.includes("Supprimer le livre")
+    );
+    if (!button) throw new Error("Suppression du livre introuvable");
+    button.click();
+    return true;
+  })()`);
+  await waitFor(
+    `location.pathname === "/" && document.body.innerText.includes("Votre bibliothèque commence ici")`,
+    "La suppression du livre contenant une note n’a pas abouti.",
+  );
+  const cascadeCounts = await readDatabaseCounts();
+
+  await navigate(
+    `http://127.0.0.1:3000/books/${notesBookId}/notes/${noteId}`,
+  );
+  await waitFor(
+    `document.body.innerText.includes("Note introuvable")`,
+    "L’état note introuvable ne s’est pas affiché.",
+  );
 
   const missingId = "00000000-0000-4000-8000-000000000000";
   await navigate(`http://127.0.0.1:3000/books/${missingId}`);
@@ -420,8 +611,28 @@ try {
       deletedCounts.books === 0 && deletedCounts.images === 0,
     creationWithoutCover:
       placeholderCounts.books === 1 && placeholderCounts.images === 0,
+    scannerStaysDisabled: scannerDisabled,
+    noteCreationAndCount:
+      oneNoteCounts.books === 1 &&
+      oneNoteCounts.notes === 1 &&
+      oneNoteCounts.images === 0,
+    noteEditPersists: true,
+    ideaBookSearchFound,
+    combinedIdeaFilterFound,
+    ideaNoResultVisible,
+    noteDeletion:
+      deletedNoteCounts.books === 1 && deletedNoteCounts.notes === 0,
+    reflectionOnlyNote:
+      beforeCascadeCounts.books === 1 && beforeCascadeCounts.notes === 1,
+    bookDeletionCascades:
+      cascadeCounts.books === 0 &&
+      cascadeCounts.notes === 0 &&
+      cascadeCounts.images === 0,
+    missingNoteState: true,
     missingBookState: true,
     detailScreenshot: detailScreenshotPath,
+    noteDetailScreenshot: noteDetailScreenshotPath,
+    ideasScreenshot: ideasScreenshotPath,
   };
 
   const offlineEvaluation = await cdp.send("Runtime.evaluate", {

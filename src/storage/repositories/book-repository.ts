@@ -134,13 +134,27 @@ export class BookRepository {
         "rw",
         this.database.books,
         this.database.images,
+        this.database.bookNotes,
         async () => {
           const book = await this.database.books.get(id as UUID);
           if (!book) return false;
 
+          const notes = await this.database.bookNotes
+            .where("bookId")
+            .equals(book.id)
+            .toArray();
+          const imageIds = new Set<UUID>();
+          if (book.coverImageId) imageIds.add(book.coverImageId);
+          for (const note of notes) {
+            if (note.sourceImageId) imageIds.add(note.sourceImageId);
+          }
+
+          await this.database.bookNotes.bulkDelete(
+            notes.map((note) => note.id),
+          );
           await this.database.books.delete(book.id);
-          if (book.coverImageId) {
-            await this.images.delete(book.coverImageId);
+          if (imageIds.size > 0) {
+            await this.database.images.bulkDelete([...imageIds]);
           }
 
           return true;

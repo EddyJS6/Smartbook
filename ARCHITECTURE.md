@@ -11,9 +11,11 @@ IndexedDB est la source immédiate des données métier. BrainBook utilise **Dex
 - préparer des migrations incrémentales ;
 - conserver une API testable indépendamment des composants React.
 
-La base s’appelle `brainbook`. Aucun livre, aucune couverture et aucune future note ne doit être enregistré dans `localStorage`.
+La base s’appelle `brainbook`. Aucun livre, aucune couverture et aucune note ne doit être enregistré dans `localStorage`.
 
-## Schéma IndexedDB version 1
+## Schéma IndexedDB
+
+La version 1, déjà diffusée, déclare uniquement `books` et `images`. Elle reste inchangée dans le code. La **version 2** conserve ces deux tables et ajoute `bookNotes` de façon additive : l’ouverture de la base met à niveau le schéma sans transformer ni supprimer les livres et images existants.
 
 ### Table `books`
 
@@ -42,22 +44,58 @@ Index : clé unique `id`, puis `updatedAt`, `title`, `author` et `status`.
 
 Les images ne sont jamais stockées en Base64 ni incorporées dans un objet `Book`.
 
+### Table `bookNotes` — ajoutée en version 2
+
+| Champ | Type | Rôle |
+| --- | --- | --- |
+| `id` | UUID | Clé primaire générée côté client |
+| `bookId` | UUID | Référence obligatoire vers `books.id` |
+| `extractedText` | string | Passage saisi manuellement ou extrait plus tard |
+| `personalReflection` | string | Réflexion personnelle |
+| `pageNumber` | string ou `null` | Page ou référence libre, par exemple `p. 42` ou `chapitre 3` |
+| `tags` | string[] | Tags normalisés et dédupliqués sans tenir compte de la casse |
+| `sourceType` | `manual`, `scan`, `import` | Provenance stable de la note |
+| `sourceImageId` | UUID ou `null` | Emplacement réservé à l’image source d’un futur scan |
+| `createdAt` | date ISO | Date de création immuable |
+| `updatedAt` | date ISO | Date de dernière modification |
+
+Index : clé unique `id`, puis `bookId`, `createdAt` et `updatedAt`. Les tags restent un tableau embarqué, car leur faible volume et la recherche locale en mémoire ne justifient pas une table de jointure.
+
+Une note est valide si elle contient au moins un passage ou une réflexion. Les deux champs peuvent coexister. Le nombre de notes est toujours calculé depuis `bookNotes` et n’est jamais dupliqué dans `Book`.
+
+## Relations et intégrité
+
+Les repositories constituent la frontière d’accès aux données :
+
+- créer une note vérifie que son livre existe ;
+- mettre à jour une note préserve son livre, son identité, sa création et sa provenance ;
+- supprimer une note supprime aussi sa future image source, dans la même transaction ;
+- supprimer un livre supprime le livre, sa couverture, toutes ses notes et leurs futures images sources dans une seule transaction Dexie.
+
+IndexedDB ne fournit pas de clés étrangères ni de cascade natives. Ces règles transactionnelles empêchent donc explicitement les notes et images orphelines.
+
 ## Séparation des responsabilités
 
-- `src/domain` contient les entités, statuts, règles de validation et recherche pure.
-- `src/storage/database.ts` déclare la base et ses versions.
-- `src/storage/repositories` centralise les opérations sur les livres et images.
+- `src/domain` contient les entités, statuts, règles de validation, normalisation et recherche pure.
+- `src/storage/database.ts` déclare la base et toutes ses versions.
+- `src/storage/repositories` centralise les opérations sur les livres, images et notes.
 - `src/hooks` adapte les repositories au cycle de vie React.
 - `src/lib/image-processing.ts` valide, oriente selon les capacités du navigateur, redimensionne et compresse les couvertures.
 - les composants visuels n’accèdent pas directement aux tables Dexie.
 
-Les créations, remplacements et suppressions de couvertures sont réalisés dans la **même transaction** que l’écriture du livre. Une erreur annule donc toute l’opération et évite les images orphelines.
+La recherche de « Mes idées » joint les notes et leurs livres en mémoire, puis porte sur le passage, la réflexion, la référence, les tags, le titre et l’auteur. La recherche est insensible à la casse et aux accents. Le filtre par tag peut être combiné avec le texte recherché.
 
 ## Stratégie des images
 
 La couverture source est limitée à 15 Mo et à 40 mégapixels pour protéger la mémoire mobile. Elle est décodée avec les API natives, redimensionnée afin que son plus grand côté ne dépasse pas 1 200 pixels, puis compressée en JPEG avec une qualité raisonnable.
 
 L’affichage récupère le Blob seulement lorsque nécessaire, crée une Object URL, puis la révoque au démontage ou au changement de couverture. Sans image, un placeholder déterministe est généré visuellement à partir du titre et de l’auteur, sans persistance supplémentaire.
+
+## Préparation du scanner
+
+Le mode actuel crée des notes `manual`. Le bouton scanner est visible mais désactivé et ne demande aucune permission caméra.
+
+Un futur scanner devra produire le même brouillon de formulaire (`extractedText`, réflexion, page et tags) et enregistrer via le même repository. Il changera uniquement `sourceType` en `scan` et pourra renseigner `sourceImageId`. Il ne doit pas introduire un second modèle, un second formulaire ou un parcours CRUD parallèle.
 
 ## Compatibilité iPhone
 
@@ -72,12 +110,12 @@ Certains formats, notamment une image HEIC non décodable par la version de Safa
 
 ## Migrations futures
 
-Les évolutions doivent ajouter une nouvelle déclaration `database.version(n)` et une migration explicite ; une version existante ne doit pas être réécrite après diffusion.
+Les évolutions doivent ajouter une nouvelle déclaration `database.version(n)` et, seulement si nécessaire, une transformation explicite. Une version existante ne doit jamais être réécrite après diffusion. Un test ouvre une base v1 peuplée avec la classe v2 pour vérifier que les données historiques sont conservées.
 
 Les UUID locaux seront aussi les identifiants distants. `updatedAt` permettra plus tard de repérer les changements à synchroniser. Supabase servira de sauvegarde et de synchronisation, jamais de prérequis au fonctionnement immédiat.
 
-## Notes et limites actuelles
+## Limites actuelles
 
-Le type `BookNote` reste présent dans le domaine, mais aucune table, interface ou persistance de notes n’est encore active. Le nombre de notes affiché vaut zéro et sera plus tard calculé depuis les notes associées, jamais stocké dans `Book`.
+Il n’y a pour l’instant ni OCR, ni capture caméra, ni authentification, ni synchronisation distante. Les suppressions sont donc définitives sur l’appareil et les confirmations l’indiquent explicitement.
 
 Le service worker continue de gérer uniquement le shell, les routes visitées et les ressources statiques. Les données IndexedDB ne sont ni mises en cache par le service worker ni synchronisées à distance.

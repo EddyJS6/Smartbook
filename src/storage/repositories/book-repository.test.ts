@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { PreparedImage } from "@/domain/models";
 import { BrainBookDatabase } from "@/storage/database";
 import { BookRepository } from "@/storage/repositories/book-repository";
+import { NoteRepository } from "@/storage/repositories/note-repository";
 
 describe("BookRepository", () => {
   let database: BrainBookDatabase;
@@ -92,7 +93,7 @@ describe("BookRepository", () => {
     expect(oldImageId && (await database.images.get(oldImageId))).toBeUndefined();
   });
 
-  it("supprime le livre et sa couverture", async () => {
+  it("supprime le livre, sa couverture et toutes ses notes", async () => {
     const created = await repository.create(
       {
         title: "Livre à supprimer",
@@ -101,10 +102,18 @@ describe("BookRepository", () => {
       },
       image,
     );
+    const notes = new NoteRepository(database);
+    await notes.create(created.id, {
+      extractedText: "Une note liée au livre",
+      personalReflection: "",
+      pageNumber: "12",
+      tags: ["Test"],
+    });
 
     expect(await repository.delete(created.id)).toBe(true);
     expect(await database.books.count()).toBe(0);
     expect(await database.images.count()).toBe(0);
+    expect(await database.bookNotes.count()).toBe(0);
   });
 
   it("gère un livre inexistant sans exception", async () => {

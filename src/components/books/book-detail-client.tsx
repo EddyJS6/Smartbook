@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { BookCover } from "@/components/books/book-cover";
+import { BookNotesSection } from "@/components/notes/book-notes-section";
 import { BackLink } from "@/components/ui/back-link";
 import { Icon } from "@/components/ui/icon";
 import { StatusMessage } from "@/components/ui/status-message";
@@ -25,7 +26,6 @@ export function BookDetailClient() {
   const router = useRouter();
   const { status, book, error, reload } = useBook(id);
   const [notice, setNotice] = useState<string | null>(null);
-  const [noteMessageVisible, setNoteMessageVisible] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
@@ -37,9 +37,18 @@ export function BookDetailClient() {
       nextNotice = "Le livre a bien été ajouté à votre bibliothèque.";
     } else if (parameters.get("updated") === "1") {
       nextNotice = "Les modifications ont bien été enregistrées.";
+    } else if (parameters.get("noteCreated") === "1") {
+      nextNotice = "La note a bien été ajoutée.";
+    } else if (parameters.get("noteDeleted") === "1") {
+      nextNotice = "La note a été supprimée de cet appareil.";
     }
 
-    if (parameters.has("created") || parameters.has("updated")) {
+    if (
+      parameters.has("created") ||
+      parameters.has("updated") ||
+      parameters.has("noteCreated") ||
+      parameters.has("noteDeleted")
+    ) {
       window.history.replaceState(null, "", window.location.pathname);
     }
 
@@ -56,7 +65,7 @@ export function BookDetailClient() {
     if (!book || isDeleting) return;
 
     const confirmed = window.confirm(
-      `Supprimer « ${book.title} » ? Cette action supprimera sa couverture et, à l’avenir, toutes ses notes associées. Elle est irréversible.`,
+      `Supprimer « ${book.title} » ? Cette action supprimera sa couverture et toutes ses notes associées. Elle est irréversible.`,
     );
     if (!confirmed) return;
 
@@ -195,45 +204,7 @@ export function BookDetailClient() {
         </p>
       </section>
 
-      <section className="mt-8 rounded-3xl border border-[var(--line)] bg-[var(--card)] p-5">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <p className="text-xs font-semibold tracking-[0.08em] text-[var(--clay)] uppercase">
-              Carnet de lecture
-            </p>
-            <h2 className="mt-1 text-xl font-semibold tracking-[-0.025em]">
-              Mes notes
-            </h2>
-          </div>
-          <span className="rounded-full bg-[var(--paper)] px-3 py-1.5 text-xs font-semibold text-[var(--muted)]">
-            0 note
-          </span>
-        </div>
-
-        <div className="mt-6 rounded-2xl bg-[var(--paper)] px-5 py-7 text-center">
-          <Icon name="note" size={24} />
-          <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
-            Vos passages et réflexions apparaîtront ici.
-          </p>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setNoteMessageVisible(true)}
-          className="mt-4 flex min-h-12 w-full items-center justify-center gap-2 rounded-2xl border border-[var(--moss)] px-5 py-3 text-sm font-semibold text-[var(--moss)]"
-        >
-          <Icon name="plus" size={18} />
-          Ajouter une note
-        </button>
-
-        {noteMessageVisible ? (
-          <div className="mt-4">
-            <StatusMessage>
-              La capture de notes arrivera à la prochaine étape.
-            </StatusMessage>
-          </div>
-        ) : null}
-      </section>
+      <BookNotesSection bookId={book.id} />
     </div>
   );
 }

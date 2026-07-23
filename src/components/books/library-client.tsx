@@ -6,6 +6,7 @@ import { BookCard } from "@/components/books/book-card";
 import { EmptyLibraryState } from "@/components/books/empty-library-state";
 import { filterBooks } from "@/domain/book-search";
 import { useBooks } from "@/hooks/use-books";
+import { useNoteCounts } from "@/hooks/use-note-counts";
 import { Icon } from "@/components/ui/icon";
 import { StatusMessage } from "@/components/ui/status-message";
 
@@ -26,6 +27,7 @@ function LibraryLoading() {
 
 export function LibraryClient() {
   const { status, books, error, reload } = useBooks();
+  const noteCounts = useNoteCounts();
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const filteredBooks = useMemo(
@@ -147,7 +149,11 @@ export function LibraryClient() {
         {status === "ready" && bookCount > 0 && filteredBooks.length > 0 ? (
           <div className="grid gap-3">
             {filteredBooks.map((book) => (
-              <BookCard key={book.id} book={book} />
+              <BookCard
+                key={book.id}
+                book={book}
+                noteCount={noteCounts[book.id] ?? 0}
+              />
             ))}
           </div>
         ) : null}

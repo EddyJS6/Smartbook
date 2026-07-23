@@ -6,9 +6,12 @@ import { Icon } from "@/components/ui/icon";
 
 type BookCardProps = {
   book: Book;
+  noteCount: number;
 };
 
-export function BookCard({ book }: BookCardProps) {
+export function BookCard({ book, noteCount }: BookCardProps) {
+  const noteLabel = noteCount > 1 ? "notes" : "note";
+
   return (
     <Link
       href={`/books/${book.id}`}
@@ -31,7 +34,8 @@ export function BookCard({ book }: BookCardProps) {
 
         <div className="mt-auto flex items-end justify-between gap-3 pt-3">
           <span className="flex items-center gap-1.5 text-xs text-[var(--muted)]">
-            <Icon name="note" size={15} />0 note
+            <Icon name="note" size={15} />
+            {noteCount} {noteLabel}
           </span>
           <span
             className="flex size-8 items-center justify-center rounded-full border border-[var(--line)] bg-white text-[var(--moss)]"

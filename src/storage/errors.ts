@@ -2,6 +2,7 @@ export type StorageErrorKind =
   | "unavailable"
   | "quota"
   | "invalid_image"
+  | "not_found"
   | "unknown";
 
 export class BrainBookStorageError extends Error {
@@ -33,7 +34,7 @@ export function normalizeStorageError(error: unknown): BrainBookStorageError {
   if (name === "QuotaExceededError") {
     return new BrainBookStorageError(
       "quota",
-      "L’espace de stockage de l’iPhone est insuffisant pour enregistrer ce livre.",
+      "L’espace de stockage de l’iPhone est insuffisant pour enregistrer ces données.",
       { cause: error },
     );
   }

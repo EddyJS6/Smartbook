@@ -21,13 +21,16 @@ export interface StoredImage {
   createdAt: string;
 }
 
+export type NoteSourceType = "manual" | "scan" | "import";
+
 export interface BookNote {
   id: UUID;
   bookId: UUID;
   extractedText: string;
   personalReflection: string;
-  pageNumber: number | null;
+  pageNumber: string | null;
   tags: string[];
+  sourceType: NoteSourceType;
   sourceImageId: UUID | null;
   createdAt: string;
   updatedAt: string;
@@ -36,3 +39,13 @@ export interface BookNote {
 export type BookInput = Pick<Book, "title" | "author" | "status">;
 
 export type PreparedImage = Omit<StoredImage, "id" | "createdAt">;
+
+export type BookNoteInput = Pick<
+  BookNote,
+  "extractedText" | "personalReflection" | "pageNumber" | "tags"
+>;
+
+export type NoteWithBook = {
+  note: BookNote;
+  book: Book;
+};
