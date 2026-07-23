@@ -1,0 +1,96 @@
+@import "tailwindcss";
+
+:root {
+  --paper: #f5f1e9;
+  --paper-deep: #ece5da;
+  --card: #fffdf9;
+  --ink: #262620;
+  --muted: #777469;
+  --line: #e8e1d7;
+  --moss: #315f4d;
+  --moss-dark: #254b3c;
+  --moss-soft: #e3ece5;
+  --clay: #b96146;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--paper);
+  color: var(--ink);
+  -webkit-tap-highlight-color: transparent;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  min-height: 100dvh;
+  margin: 0;
+  background: var(--paper);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button,
+a {
+  touch-action: manipulation;
+}
+
+:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--moss) 45%, transparent);
+  outline-offset: 3px;
+}
+
+.app-shell {
+  min-height: 100dvh;
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-left: env(safe-area-inset-left);
+}
+
+.page-content {
+  width: min(100%, 32rem);
+  min-height: 100dvh;
+  margin-inline: auto;
+  padding: 1.25rem 1.25rem calc(7rem + env(safe-area-inset-bottom));
+}
+
+.bottom-nav {
+  padding-right: max(0.75rem, env(safe-area-inset-right));
+  padding-bottom: max(0.65rem, env(safe-area-inset-bottom));
+  padding-left: max(0.75rem, env(safe-area-inset-left));
+}
+
+.balance {
+  text-wrap: balance;
+}
+
+@media (min-width: 40rem) {
+  body {
+    background: var(--paper-deep);
+  }
+
+  .app-shell {
+    width: min(100%, 34rem);
+    margin-inline: auto;
+    background: var(--paper);
+    box-shadow: 0 0 60px rgb(65 52 39 / 0.08);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .book-card {
+    transition:
+      transform 180ms ease,
+      box-shadow 180ms ease;
+  }
+
+  .book-card:active {
+    transform: scale(0.985);
+  }
+}

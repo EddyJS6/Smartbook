@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900" viewBox="0 0 600 900" role="img" aria-labelledby="title">
+  <title id="title">Couverture temporaire de Siddhartha</title>
+  <rect width="600" height="900" fill="#234B43"/>
+  <circle cx="300" cy="334" r="142" fill="#DDAE66"/>
+  <circle cx="300" cy="334" r="111" fill="#234B43"/>
+  <path d="M166 406c85-55 183-55 268 0M196 442c65-38 143-38 208 0M232 478c42-21 94-21 136 0" fill="none" stroke="#DDAE66" stroke-width="7" stroke-linecap="round"/>
+  <text x="300" y="630" fill="#F8F0DF" font-family="Georgia, serif" font-size="72" text-anchor="middle" letter-spacing="7">SIDDHARTHA</text>
+  <text x="300" y="704" fill="#C9D4CC" font-family="Arial, sans-serif" font-size="27" text-anchor="middle" letter-spacing="5">HERMANN HESSE</text>
+</svg>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900" viewBox="0 0 600 900" role="img" aria-labelledby="title">
+  <title id="title">Couverture temporaire de L'Art de la simplicité</title>
+  <rect width="600" height="900" fill="#CC6E51"/>
+  <rect x="56" y="56" width="488" height="788" rx="4" fill="none" stroke="#F8EFE3" stroke-width="3" opacity=".75"/>
+  <circle cx="300" cy="264" r="86" fill="#F4D8BE"/>
+  <path d="M300 178v172M214 264h172" stroke="#CC6E51" stroke-width="2" opacity=".55"/>
+  <text x="300" y="475" fill="#FFF9EF" font-family="Georgia, serif" font-size="58" text-anchor="middle" letter-spacing="7">L’ART DE LA</text>
+  <text x="300" y="548" fill="#FFF9EF" font-family="Georgia, serif" font-size="58" text-anchor="middle" letter-spacing="3">SIMPLICITÉ</text>
+  <line x1="208" y1="606" x2="392" y2="606" stroke="#F4D8BE" stroke-width="3"/>
+  <text x="300" y="682" fill="#F8E8D8" font-family="Arial, sans-serif" font-size="26" text-anchor="middle" letter-spacing="4">DOMINIQUE LOREAU</text>
+</svg>

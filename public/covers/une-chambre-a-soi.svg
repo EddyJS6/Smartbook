@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900" viewBox="0 0 600 900" role="img" aria-labelledby="title">
+  <title id="title">Couverture temporaire d'Une chambre à soi</title>
+  <rect width="600" height="900" fill="#D7CDBB"/>
+  <rect x="80" y="110" width="440" height="350" rx="220" fill="#8D5471"/>
+  <path d="M80 287h440M300 110v350" stroke="#D7CDBB" stroke-width="8"/>
+  <rect x="244" y="390" width="112" height="150" fill="#524B43"/>
+  <circle cx="334" cy="466" r="8" fill="#D7CDBB"/>
+  <text x="300" y="650" fill="#3B3732" font-family="Georgia, serif" font-size="57" text-anchor="middle">UNE CHAMBRE</text>
+  <text x="300" y="718" fill="#3B3732" font-family="Georgia, serif" font-size="57" text-anchor="middle">À SOI</text>
+  <text x="300" y="790" fill="#75566A" font-family="Arial, sans-serif" font-size="28" text-anchor="middle" letter-spacing="5">VIRGINIA WOOLF</text>
+</svg>
