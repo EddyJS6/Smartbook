@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import type { Book, BookNote } from "@/domain/models";
-import { BookCover } from "@/components/books/book-cover";
+import { ContentArtwork } from "@/components/books/content-artwork";
 import { TagPill } from "@/components/notes/tag-pill";
 import { Icon } from "@/components/ui/icon";
 import { formatShortDate } from "@/lib/format-date";
@@ -25,9 +25,11 @@ export function NoteCard({ note, book }: NoteCardProps) {
     >
       {book ? (
         <div className="mb-4 flex items-center gap-3 border-b border-[var(--line)] pb-3">
-          <BookCover
-            book={book}
-            className="aspect-[2/3] w-10 shrink-0 rounded-lg shadow-sm"
+          <ContentArtwork
+            content={book}
+            className={`w-12 shrink-0 rounded-lg shadow-sm ${
+              book.contentType === "video" ? "aspect-video" : "aspect-[2/3]"
+            }`}
           />
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold text-[var(--ink)]">
@@ -36,6 +38,12 @@ export function NoteCard({ note, book }: NoteCardProps) {
             <p className="truncate text-xs text-[var(--muted)]">{book.author}</p>
           </div>
         </div>
+      ) : null}
+
+      {note.title ? (
+        <h3 className="mb-2 line-clamp-2 font-semibold text-[var(--ink)]">
+          {note.title}
+        </h3>
       ) : null}
 
       {metadata?.isFavorite || metadata?.isImportant ? (

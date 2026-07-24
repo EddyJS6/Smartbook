@@ -46,6 +46,7 @@ export function filterIdeas(
     if (!normalizedQuery) return true;
 
     const searchableValues = [
+      note.title ?? "",
       note.extractedText,
       note.personalReflection,
       note.pageNumber ?? "",

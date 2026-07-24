@@ -1,12 +1,18 @@
 export type UUID = `${string}-${string}-${string}-${string}-${string}`;
 
 export type BookStatus = "to_read" | "reading" | "finished";
+export type LibraryContentType = "book" | "video";
 
 export interface Book {
   id: UUID;
+  /** Missing only on legacy in-memory fixtures; IndexedDB v5 materializes it. */
+  contentType?: LibraryContentType;
   title: string;
   author: string;
   coverImageId: UUID | null;
+  youtubeUrl?: string | null;
+  youtubeVideoId?: string | null;
+  thumbnailUrl?: string | null;
   status: BookStatus;
   createdAt: string;
   updatedAt: string;
@@ -21,11 +27,12 @@ export interface StoredImage {
   createdAt: string;
 }
 
-export type NoteSourceType = "manual" | "scan" | "import";
+export type NoteSourceType = "manual" | "scan" | "voice" | "import";
 
 export interface BookNote {
   id: UUID;
   bookId: UUID;
+  title?: string;
   extractedText: string;
   personalReflection: string;
   pageNumber: string | null;
@@ -52,12 +59,23 @@ export interface NoteReadingMetadata {
 
 export type BookInput = Pick<Book, "title" | "author" | "status">;
 
+export type VideoInput = Pick<
+  Book,
+  "title" | "author"
+> & {
+  youtubeUrl: string;
+  youtubeVideoId: string;
+  thumbnailUrl: string;
+};
+
 export type PreparedImage = Omit<StoredImage, "id" | "createdAt">;
 
 export type BookNoteInput = Pick<
   BookNote,
   "extractedText" | "personalReflection" | "pageNumber" | "tags"
->;
+> & {
+  title?: string;
+};
 
 export type NoteWithBook = {
   note: BookNote;

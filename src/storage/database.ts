@@ -161,6 +161,36 @@ export class BrainBookDatabase extends Dexie {
           })),
         );
       });
+
+    this.version(5)
+      .stores({
+        books:
+          "&id, contentType, updatedAt, title, author, status, youtubeVideoId",
+        images: "&id, createdAt",
+        bookNotes: "&id, bookId, title, createdAt, updatedAt",
+        noteReadingMetadata:
+          "&noteId, favoriteIndex, importantIndex, lastReadAt, lastSuggestedAt, updatedAt",
+        syncQueue:
+          "&id, [entityType+entityId], entityType, operation, status, createdAt, updatedAt",
+        syncMetadata: "&id, associatedUserId",
+        localSafetyBackups: "&id, createdAt",
+      })
+      .upgrade(async (transaction) => {
+        await Promise.all([
+          transaction.table<Book>("books").toCollection().modify((book) => {
+            book.contentType = "book";
+            book.youtubeUrl = null;
+            book.youtubeVideoId = null;
+            book.thumbnailUrl = null;
+          }),
+          transaction
+            .table<BookNote>("bookNotes")
+            .toCollection()
+            .modify((note) => {
+              note.title = "";
+            }),
+        ]);
+      });
   }
 }
 

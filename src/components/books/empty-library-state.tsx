@@ -11,15 +11,22 @@ export function EmptyLibraryState() {
         Votre bibliothèque commence ici
       </h3>
       <p className="balance mx-auto mt-2 max-w-xs text-sm leading-6 text-[var(--muted)]">
-        Les livres que vous ajouterez apparaîtront ici, prêts à accueillir vos notes.
+        Vos livres et vidéos apparaîtront ici, prêts à accueillir vos notes.
       </p>
-      <Link
-        href="/books/new"
-        className="mt-6 inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-[var(--moss)] px-5 py-3 text-sm font-semibold text-white"
-      >
-        <Icon name="plus" size={18} />
-        Ajouter mon premier livre
-      </Link>
+      <div className="mt-6 grid grid-cols-2 gap-2">
+        <Link
+          href="/books/new"
+          className="inline-flex min-h-12 items-center justify-center rounded-2xl bg-[var(--moss)] px-4 text-sm font-semibold text-white"
+        >
+          Un livre
+        </Link>
+        <Link
+          href="/videos/new"
+          className="inline-flex min-h-12 items-center justify-center rounded-2xl border border-[var(--moss)] px-4 text-sm font-semibold text-[var(--moss)]"
+        >
+          Une vidéo
+        </Link>
+      </div>
     </div>
   );
 }

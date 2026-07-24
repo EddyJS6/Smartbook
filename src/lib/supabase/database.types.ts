@@ -7,6 +7,10 @@ export type Database = {
           id: string;
           title: string;
           author: string;
+          content_type: string;
+          youtube_url: string | null;
+          youtube_video_id: string | null;
+          thumbnail_url: string | null;
           status: string;
           cover_storage_path: string | null;
           created_at: string;
@@ -19,6 +23,10 @@ export type Database = {
           id: string;
           title: string;
           author: string;
+          content_type?: string;
+          youtube_url?: string | null;
+          youtube_video_id?: string | null;
+          thumbnail_url?: string | null;
           status: string;
           cover_storage_path?: string | null;
           created_at: string;
@@ -29,6 +37,10 @@ export type Database = {
         Update: {
           title?: string;
           author?: string;
+          content_type?: string;
+          youtube_url?: string | null;
+          youtube_video_id?: string | null;
+          thumbnail_url?: string | null;
           status?: string;
           cover_storage_path?: string | null;
           updated_at?: string;
@@ -41,6 +53,7 @@ export type Database = {
           user_id: string;
           id: string;
           book_id: string;
+          title: string;
           extracted_text: string;
           personal_reflection: string;
           page_number: string | null;
@@ -55,6 +68,7 @@ export type Database = {
           user_id: string;
           id: string;
           book_id: string;
+          title?: string;
           extracted_text?: string;
           personal_reflection?: string;
           page_number?: string | null;
@@ -67,6 +81,7 @@ export type Database = {
         };
         Update: {
           book_id?: string;
+          title?: string;
           extracted_text?: string;
           personal_reflection?: string;
           page_number?: string | null;

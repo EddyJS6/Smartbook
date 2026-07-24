@@ -2,12 +2,19 @@ import type {
   Book,
   BookNote,
   BookStatus,
+  LibraryContentType,
   NoteReadingMetadata,
   NoteSourceType,
   UUID,
 } from "@/domain/models";
 import { normalizeBookText } from "@/domain/book-validation";
 import {
+  canonicalYouTubeUrl,
+  parseYouTubeVideoId,
+  youtubeThumbnailUrl,
+} from "@/domain/youtube-video";
+import {
+  normalizeNoteTitle,
   normalizeMultilineText,
   normalizePageReference,
   normalizeTags,
@@ -25,9 +32,11 @@ const BOOK_STATUSES = new Set<BookStatus>([
   "reading",
   "finished",
 ]);
+const CONTENT_TYPES = new Set<LibraryContentType>(["book", "video"]);
 const NOTE_SOURCE_TYPES = new Set<NoteSourceType>([
   "manual",
   "scan",
+  "voice",
   "import",
 ]);
 
@@ -69,6 +78,10 @@ export function bookToRemote(
     id: book.id,
     title: book.title,
     author: book.author,
+    content_type: book.contentType ?? "book",
+    youtube_url: book.youtubeUrl ?? null,
+    youtube_video_id: book.youtubeVideoId ?? null,
+    thumbnail_url: book.thumbnailUrl ?? null,
     status: book.status,
     cover_storage_path: coverStoragePath,
     created_at: book.createdAt,
@@ -91,6 +104,10 @@ export function remoteBookToLocal(
   if (!BOOK_STATUSES.has(row.status as BookStatus)) {
     throw new RemoteDataValidationError("Statut de livre distant invalide.");
   }
+  const contentType = row.content_type ?? "book";
+  if (!CONTENT_TYPES.has(contentType as LibraryContentType)) {
+    throw new RemoteDataValidationError("Type de contenu distant invalide.");
+  }
   const title = normalizeBookText(row.title);
   const author = normalizeBookText(row.author);
   if (!title || !author) {
@@ -98,13 +115,38 @@ export function remoteBookToLocal(
       "Un livre distant possède un titre ou un auteur vide.",
     );
   }
+  let youtubeUrl: string | null = null;
+  let youtubeVideoId: string | null = null;
+  let thumbnailUrl: string | null = null;
+  if (contentType === "video") {
+    const parsedId =
+      typeof row.youtube_url === "string"
+        ? parseYouTubeVideoId(row.youtube_url)
+        : null;
+    if (
+      !parsedId ||
+      parsedId !== row.youtube_video_id ||
+      row.cover_storage_path !== null
+    ) {
+      throw new RemoteDataValidationError(
+        "Une vidéo distante possède des informations YouTube invalides.",
+      );
+    }
+    youtubeVideoId = parsedId;
+    youtubeUrl = canonicalYouTubeUrl(parsedId);
+    thumbnailUrl = youtubeThumbnailUrl(parsedId);
+  }
 
   return {
     id,
+    contentType: contentType as LibraryContentType,
     title,
     author,
     status: row.status as BookStatus,
     coverImageId,
+    youtubeUrl,
+    youtubeVideoId,
+    thumbnailUrl,
     createdAt: requireDate(row.created_at, "books.created_at"),
     updatedAt: requireDate(row.updated_at, "books.updated_at"),
   };
@@ -115,6 +157,7 @@ export function noteToRemote(note: BookNote, userId: UUID) {
     user_id: userId,
     id: note.id,
     book_id: note.bookId,
+    title: note.title ?? "",
     extracted_text: note.extractedText,
     personal_reflection: note.personalReflection,
     page_number: note.pageNumber,
@@ -222,6 +265,7 @@ export function remoteNoteToLocal(
   return {
     id,
     bookId,
+    title: normalizeNoteTitle(row.title ?? ""),
     extractedText,
     personalReflection,
     pageNumber: normalizePageReference(row.page_number ?? ""),

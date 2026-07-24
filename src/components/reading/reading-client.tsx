@@ -221,6 +221,11 @@ export function ReadingClient() {
 
       <article className="mt-7">
         <div className="text-center">
+          {current.note.title ? (
+            <h1 className="balance mb-3 text-2xl font-semibold tracking-[-0.03em]">
+              {current.note.title}
+            </h1>
+          ) : null}
           <p className="text-sm font-semibold text-[var(--ink)]">
             {current.book.title}
           </p>
@@ -233,7 +238,9 @@ export function ReadingClient() {
         {current.note.extractedText ? (
           <section className="mt-8 rounded-[2rem] border border-[var(--line)] bg-[var(--card)] p-6">
             <p className="text-[0.67rem] font-bold tracking-[0.13em] text-[var(--clay)] uppercase">
-              Passage du livre
+              {current.book.contentType === "video"
+                ? "Idée de la vidéo"
+                : "Passage du livre"}
             </p>
             <div className={`mt-5 whitespace-pre-wrap break-words font-serif text-[var(--ink)] ${textSize}`}>
               {current.note.extractedText}

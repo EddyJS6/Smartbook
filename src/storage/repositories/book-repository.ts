@@ -3,14 +3,23 @@ import type {
   BookInput,
   PreparedImage,
   UUID,
+  VideoInput,
 } from "@/domain/models";
 import { createEntityId } from "@/domain/id";
 import { normalizeBookText } from "@/domain/book-validation";
 import {
+  canonicalYouTubeUrl,
+  parseYouTubeVideoId,
+  youtubeThumbnailUrl,
+} from "@/domain/youtube-video";
+import {
   brainBookDatabase,
   type BrainBookDatabase,
 } from "@/storage/database";
-import { normalizeStorageError } from "@/storage/errors";
+import {
+  BrainBookStorageError,
+  normalizeStorageError,
+} from "@/storage/errors";
 import { ImageRepository } from "@/storage/repositories/image-repository";
 import {
   enqueueSyncOperation,
@@ -68,7 +77,11 @@ export class BookRepository {
           const book: Book = {
             ...normalizeInput(input),
             id: createEntityId(),
+            contentType: "book",
             coverImageId: storedImage?.id ?? null,
+            youtubeUrl: null,
+            youtubeVideoId: null,
+            thumbnailUrl: null,
             createdAt: timestamp,
             updatedAt: timestamp,
           };
@@ -102,6 +115,59 @@ export class BookRepository {
     }
   }
 
+  async createVideo(input: VideoInput): Promise<Book> {
+    try {
+      const parsedVideoId = parseYouTubeVideoId(input.youtubeUrl);
+      const title = normalizeBookText(input.title).slice(0, 500);
+      const author = normalizeBookText(input.author).slice(0, 300);
+      if (
+        !title ||
+        !author ||
+        !parsedVideoId ||
+        parsedVideoId !== input.youtubeVideoId
+      ) {
+        throw new BrainBookStorageError(
+          "validation",
+          "Les informations de cette vidéo YouTube sont invalides.",
+        );
+      }
+      const timestamp = new Date().toISOString();
+      const video: Book = {
+        id: createEntityId(),
+        contentType: "video",
+        title,
+        author,
+        coverImageId: null,
+        youtubeUrl: canonicalYouTubeUrl(parsedVideoId),
+        youtubeVideoId: parsedVideoId,
+        thumbnailUrl: youtubeThumbnailUrl(parsedVideoId),
+        status: "to_read",
+        createdAt: timestamp,
+        updatedAt: timestamp,
+      };
+      await this.database.transaction(
+        "rw",
+        this.database.books,
+        this.database.syncQueue,
+        async () => {
+          await this.database.books.add(video);
+          await enqueueSyncOperation(
+            this.database,
+            "book",
+            video.id,
+            "upsert",
+            null,
+            timestamp,
+          );
+        },
+      );
+      notifyLocalMutation();
+      return video;
+    } catch (error) {
+      throw normalizeStorageError(error);
+    }
+  }
+
   async update(
     id: string,
     input: BookInput,
@@ -116,6 +182,11 @@ export class BookRepository {
         async () => {
           const existing = await this.database.books.get(id as UUID);
           if (!existing) return undefined;
+          if (existing.contentType === "video") {
+            throw new Error(
+              "Une vidéo ne peut pas être modifiée avec le formulaire de livre.",
+            );
+          }
 
           const timestamp = new Date().toISOString();
           let nextCoverId = existing.coverImageId;

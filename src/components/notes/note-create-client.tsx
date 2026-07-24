@@ -26,7 +26,7 @@ export function NoteCreateClient() {
       <div className="page-content flex items-center">
         <section className="w-full rounded-[2rem] border border-[var(--line)] bg-[var(--card)] p-7 text-center">
           <Icon name="book" size={27} />
-          <h1 className="mt-5 text-2xl font-semibold">Livre introuvable</h1>
+          <h1 className="mt-5 text-2xl font-semibold">Contenu introuvable</h1>
           <Link
             href="/"
             className="mt-6 inline-flex min-h-12 items-center justify-center rounded-2xl bg-[var(--moss)] px-6 py-3 text-sm font-semibold text-white"

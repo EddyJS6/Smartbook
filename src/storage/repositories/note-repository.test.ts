@@ -30,6 +30,7 @@ describe("NoteRepository", () => {
   it("crée, normalise, relit et compte une note manuelle", async () => {
     const book = await createBook();
     const created = await notes.create(book.id, {
+      title: "  Idée principale  ",
       extractedText: "  Un passage essentiel.  ",
       personalReflection: "",
       pageNumber: "  chapitre 2 ",
@@ -38,6 +39,7 @@ describe("NoteRepository", () => {
 
     expect(created).toMatchObject({
       bookId: book.id,
+      title: "Idée principale",
       extractedText: "Un passage essentiel.",
       personalReflection: "",
       pageNumber: "chapitre 2",
@@ -75,6 +77,45 @@ describe("NoteRepository", () => {
       tags: ["OCR"],
     });
     expect(await database.images.count()).toBe(0);
+  });
+
+  it("accepte une note vocale pour une vidéo et refuse son scanner", async () => {
+    const video = await books.createVideo({
+      title: "Vidéo",
+      author: "Autrice",
+      youtubeUrl: "https://www.youtube.com/watch?v=M7lc1UVf-VE",
+      youtubeVideoId: "M7lc1UVf-VE",
+      thumbnailUrl: "https://i.ytimg.com/vi/M7lc1UVf-VE/hqdefault.jpg",
+    });
+    await expect(
+      notes.create(
+        video.id,
+        {
+          title: "Dictée",
+          extractedText: "",
+          personalReflection: "Une réflexion dictée.",
+          pageNumber: "12:45",
+          tags: [],
+        },
+        "voice",
+      ),
+    ).resolves.toMatchObject({
+      title: "Dictée",
+      sourceType: "voice",
+      bookId: video.id,
+    });
+    await expect(
+      notes.create(
+        video.id,
+        {
+          extractedText: "Scan interdit",
+          personalReflection: "",
+          pageNumber: null,
+          tags: [],
+        },
+        "scan",
+      ),
+    ).rejects.toMatchObject({ kind: "validation" });
   });
 
   it("modifie le contenu sans changer l’identité ni la provenance", async () => {

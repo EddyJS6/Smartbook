@@ -16,9 +16,10 @@ import {
   validateTagCandidate,
 } from "@/domain/note-validation";
 import { applyScannedPassage } from "@/domain/note-scan";
-import { BookCover } from "@/components/books/book-cover";
+import { ContentArtwork } from "@/components/books/content-artwork";
 import { ScanFlow } from "@/components/notes/scan-flow";
 import { TagPill } from "@/components/notes/tag-pill";
+import { VoiceDictationButton } from "@/components/notes/voice-dictation-button";
 import { BackLink } from "@/components/ui/back-link";
 import { Icon } from "@/components/ui/icon";
 import { StatusMessage } from "@/components/ui/status-message";
@@ -60,6 +61,7 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
     note?.sourceType ?? "manual",
   );
   const [values, setValues] = useState<NoteFormValues>({
+    title: note?.title ?? "",
     extractedText: note?.extractedText ?? "",
     personalReflection: note?.personalReflection ?? "",
     pageNumber: note?.pageNumber ?? "",
@@ -121,13 +123,24 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
   };
 
   const updateTextField = (
-    field: "extractedText" | "personalReflection" | "pageNumber",
+    field: "title" | "extractedText" | "personalReflection" | "pageNumber",
     value: string,
   ) => {
     setValues((current) => ({ ...current, [field]: value }));
     if (field === "extractedText" || field === "personalReflection") {
       setFieldErrors((current) => ({ ...current, content: undefined }));
     }
+  };
+
+  const appendVoiceTranscript = (transcript: string) => {
+    setValues((current) => ({
+      ...current,
+      personalReflection: current.personalReflection.trim()
+        ? `${current.personalReflection.trimEnd()} ${transcript}`
+        : transcript,
+    }));
+    setFieldErrors((current) => ({ ...current, content: undefined }));
+    setSourceType((current) => (current === "manual" ? "voice" : current));
   };
 
   const addTag = (candidate = tagDraft) => {
@@ -240,12 +253,20 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
               ? `/books/${book.id}/notes/${note.id}`
               : `/books/${book.id}`
           }
-          label={mode === "edit" ? "Retour à la note" : "Fiche du livre"}
+          label={
+            mode === "edit"
+              ? "Retour à la note"
+              : book.contentType === "video"
+                ? "Fiche de la vidéo"
+                : "Fiche du livre"
+          }
         />
         {mode === "edit" || entryMode === "manual" ? (
           <>
             <p className="mt-5 text-[0.7rem] font-bold tracking-[0.16em] text-[var(--clay)] uppercase">
-              Carnet de lecture
+              {book.contentType === "video"
+                ? "Carnet vidéo"
+                : "Carnet de lecture"}
             </p>
             <h1 className="mt-2 text-[2rem] leading-tight font-semibold tracking-[-0.04em]">
               {mode === "create" ? "Ajouter une note" : "Modifier la note"}
@@ -256,9 +277,11 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
 
       {mode === "edit" || entryMode === "manual" ? (
         <section className="mt-6 flex items-center gap-4 rounded-3xl border border-[var(--line)] bg-[var(--card)] p-3">
-          <BookCover
-            book={book}
-            className="aspect-[2/3] w-14 shrink-0 rounded-xl shadow-sm"
+          <ContentArtwork
+            content={book}
+            className={`w-16 shrink-0 rounded-xl shadow-sm ${
+              book.contentType === "video" ? "aspect-video" : "aspect-[2/3]"
+            }`}
           />
           <div className="min-w-0">
             <p className="truncate font-semibold">{book.title}</p>
@@ -269,7 +292,9 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
         </section>
       ) : null}
 
-      {mode === "create" && entryMode === "manual" ? (
+      {mode === "create" &&
+      entryMode === "manual" &&
+      book.contentType !== "video" ? (
         <section aria-label="Scan rapide" className="mt-6">
           <input
             ref={cameraInputRef}
@@ -332,18 +357,39 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
         ) : null}
 
         <div>
+          <label htmlFor="note-title" className="mb-2 block text-sm font-semibold">
+            Titre de la note{" "}
+            <span className="font-normal text-[var(--muted)]">(facultatif)</span>
+          </label>
+          <input
+            id="note-title"
+            type="text"
+            maxLength={160}
+            value={values.title ?? ""}
+            onChange={(event) => updateTextField("title", event.target.value)}
+            placeholder="Ex. Une idée à appliquer"
+            className={`${fieldClassName} min-h-13`}
+          />
+        </div>
+
+        <VoiceDictationButton onTranscript={appendVoiceTranscript} />
+
+        <div>
           <label
             htmlFor="extracted-text"
             className="mb-2 block text-sm font-semibold"
           >
-            Passage du livre
+            {book.contentType === "video"
+              ? "Extrait ou idée de la vidéo"
+              : "Passage du livre"}
           </label>
           <p
             id="extracted-text-help"
             className="mb-2 text-xs leading-5 text-[var(--muted)]"
           >
-            Recopiez pour le moment la citation ou le passage que vous souhaitez
-            conserver.
+            {book.contentType === "video"
+              ? "Notez une idée exprimée dans la vidéo, si vous souhaitez la distinguer de votre réflexion."
+              : "Recopiez la citation ou le passage que vous souhaitez conserver."}
           </p>
           <textarea
             id="extracted-text"
@@ -353,7 +399,11 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
             }
             aria-describedby="extracted-text-help"
             rows={7}
-            placeholder="Écrivez ou collez le passage ici…"
+            placeholder={
+              book.contentType === "video"
+                ? "Écrivez une idée de la vidéo…"
+                : "Écrivez ou collez le passage ici…"
+            }
             className={`${fieldClassName} min-h-44 resize-y leading-6`}
           />
         </div>
@@ -390,7 +440,9 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
             htmlFor="page-number"
             className="mb-2 block text-sm font-semibold"
           >
-            Page ou référence{" "}
+            {book.contentType === "video"
+              ? "Horodatage ou référence"
+              : "Page ou référence"}{" "}
             <span className="font-normal text-[var(--muted)]">(facultatif)</span>
           </label>
           <input
@@ -400,7 +452,11 @@ export function NoteForm({ mode, book, note }: NoteFormProps) {
             onChange={(event) =>
               updateTextField("pageNumber", event.target.value)
             }
-            placeholder="42, 42-43 ou Chapitre 3"
+            placeholder={
+              book.contentType === "video"
+                ? "12:45 ou Chapitre 3"
+                : "42, 42-43 ou Chapitre 3"
+            }
             className={`${fieldClassName} min-h-13`}
           />
         </div>

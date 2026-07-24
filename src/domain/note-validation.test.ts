@@ -18,6 +18,7 @@ describe("note validation", () => {
 
     expect(result.success).toBe(true);
     expect(result.data).toEqual({
+      title: "",
       extractedText: "Une phrase importante.",
       personalReflection: "",
       pageNumber: "chapitre 3",

@@ -5,12 +5,17 @@ import { NoteCard } from "@/components/notes/note-card";
 import { Icon } from "@/components/ui/icon";
 import { StatusMessage } from "@/components/ui/status-message";
 import { useBookNotes } from "@/hooks/use-book-notes";
+import type { LibraryContentType } from "@/domain/models";
 
 type BookNotesSectionProps = {
   bookId: string;
+  contentType?: LibraryContentType;
 };
 
-export function BookNotesSection({ bookId }: BookNotesSectionProps) {
+export function BookNotesSection({
+  bookId,
+  contentType = "book",
+}: BookNotesSectionProps) {
   const { status, notes, error, reload } = useBookNotes(bookId);
   const noteLabel = notes.length > 1 ? "notes" : "note";
 
@@ -19,7 +24,7 @@ export function BookNotesSection({ bookId }: BookNotesSectionProps) {
       <div className="flex items-center justify-between gap-4">
         <div>
           <p className="text-xs font-semibold tracking-[0.08em] text-[var(--clay)] uppercase">
-            Carnet de lecture
+            {contentType === "video" ? "Carnet vidéo" : "Carnet de lecture"}
           </p>
           <h2 className="mt-1 text-xl font-semibold tracking-[-0.025em]">
             Mes notes
@@ -57,7 +62,9 @@ export function BookNotesSection({ bookId }: BookNotesSectionProps) {
           </span>
           <h3 className="mt-4 font-semibold">Aucune note pour le moment</h3>
           <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-            Conservez ici les passages et réflexions qui comptent pour vous.
+            {contentType === "video"
+              ? "Conservez ici les idées et réflexions de cette vidéo."
+              : "Conservez ici les passages et réflexions qui comptent pour vous."}
           </p>
           <Link
             href={`/books/${bookId}/notes/new`}

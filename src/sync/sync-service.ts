@@ -62,9 +62,9 @@ import type {
 } from "@/sync/types";
 
 const BOOK_COLUMNS =
-  "user_id,id,title,author,status,cover_storage_path,created_at,updated_at,deleted_at,server_updated_at";
+  "user_id,id,title,author,content_type,youtube_url,youtube_video_id,thumbnail_url,status,cover_storage_path,created_at,updated_at,deleted_at,server_updated_at";
 const NOTE_COLUMNS =
-  "user_id,id,book_id,extracted_text,personal_reflection,page_number,tags,source_type,created_at,updated_at,deleted_at,server_updated_at";
+  "user_id,id,book_id,title,extracted_text,personal_reflection,page_number,tags,source_type,created_at,updated_at,deleted_at,server_updated_at";
 const READING_METADATA_COLUMNS =
   "user_id,note_id,is_favorite,is_important,last_read_at,read_count,last_suggested_at,created_at,updated_at,deleted_at,server_updated_at";
 const MAX_RETRY_DELAY_MS = 60_000;

@@ -4,6 +4,7 @@ export const MAX_TAG_LENGTH = 30;
 export const MAX_TAGS = 12;
 
 export type NoteFormValues = {
+  title?: string;
   extractedText: string;
   personalReflection: string;
   pageNumber: string;
@@ -31,6 +32,10 @@ export function normalizeMultilineText(value: string): string {
     .map((line) => line.trim())
     .join("\n")
     .trim();
+}
+
+export function normalizeNoteTitle(value: string): string {
+  return value.trim().replace(/\s+/g, " ").slice(0, 160);
 }
 
 export function normalizePageReference(value: string): string | null {
@@ -79,6 +84,7 @@ export function validateTagCandidate(
 
 export function validateNote(values: NoteFormValues): NoteValidationResult {
   const data: BookNoteInput = {
+    title: normalizeNoteTitle(values.title ?? ""),
     extractedText: normalizeMultilineText(values.extractedText),
     personalReflection: normalizeMultilineText(values.personalReflection),
     pageNumber: normalizePageReference(values.pageNumber),
@@ -88,7 +94,7 @@ export function validateNote(values: NoteFormValues): NoteValidationResult {
 
   if (!data.extractedText && !data.personalReflection) {
     errors.content =
-      "Ajoutez au moins un passage du livre ou une réflexion personnelle.";
+      "Ajoutez au moins une idée ou une réflexion personnelle.";
   }
 
   if (Object.keys(errors).length > 0) {

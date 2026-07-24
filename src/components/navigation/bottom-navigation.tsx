@@ -27,7 +27,9 @@ export function BottomNavigation() {
         {navigationItems.map((item) => {
           const active =
             item.href === "/"
-              ? pathname === "/" || pathname.startsWith("/books")
+              ? pathname === "/" ||
+                pathname.startsWith("/books") ||
+                pathname.startsWith("/videos")
               : pathname.startsWith(item.href);
 
           return (

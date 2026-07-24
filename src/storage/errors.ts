@@ -2,6 +2,7 @@ export type StorageErrorKind =
   | "unavailable"
   | "quota"
   | "invalid_image"
+  | "validation"
   | "not_found"
   | "unknown";
 

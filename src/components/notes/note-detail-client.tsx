@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { BookCover } from "@/components/books/book-cover";
+import { ContentArtwork } from "@/components/books/content-artwork";
 import { TagPill } from "@/components/notes/tag-pill";
 import { BackLink } from "@/components/ui/back-link";
 import { Icon } from "@/components/ui/icon";
@@ -194,7 +194,14 @@ export function NoteDetailClient() {
   return (
     <div className="page-content">
       <header className="flex items-center justify-between gap-4 pt-1">
-        <BackLink href={`/books/${book.id}`} label="Fiche du livre" />
+        <BackLink
+          href={`/books/${book.id}`}
+          label={
+            book.contentType === "video"
+              ? "Fiche de la vidéo"
+              : "Fiche du livre"
+          }
+        />
         <details className="relative">
           <summary
             aria-label="Actions de la note"
@@ -242,9 +249,11 @@ export function NoteDetailClient() {
       ) : null}
 
       <section className="mt-6 flex items-center gap-4 rounded-3xl border border-[var(--line)] bg-[var(--card)] p-3">
-        <BookCover
-          book={book}
-          className="aspect-[2/3] w-14 shrink-0 rounded-xl shadow-sm"
+        <ContentArtwork
+          content={book}
+          className={`w-16 shrink-0 rounded-xl shadow-sm ${
+            book.contentType === "video" ? "aspect-video" : "aspect-[2/3]"
+          }`}
         />
         <div className="min-w-0">
           <p className="truncate font-semibold">{book.title}</p>
@@ -253,6 +262,12 @@ export function NoteDetailClient() {
           </p>
         </div>
       </section>
+
+      {note.title ? (
+        <h1 className="balance mt-7 text-2xl font-semibold tracking-[-0.03em]">
+          {note.title}
+        </h1>
+      ) : null}
 
       <section
         aria-label="Repères de relecture"
@@ -304,11 +319,19 @@ export function NoteDetailClient() {
           Passage extrait depuis une photo
         </div>
       ) : null}
+      {note.sourceType === "voice" ? (
+        <div className="mt-5 flex items-center gap-2 rounded-2xl bg-[var(--moss-soft)] px-4 py-3 text-xs font-semibold text-[var(--moss)]">
+          <Icon name="microphone" size={17} />
+          Note créée avec la dictée vocale
+        </div>
+      ) : null}
 
       {note.extractedText ? (
         <article className="mt-7 rounded-[1.8rem] border border-[var(--line)] bg-[var(--card)] p-6">
           <p className="text-[0.68rem] font-bold tracking-[0.12em] text-[var(--clay)] uppercase">
-            Passage du livre
+            {book.contentType === "video"
+              ? "Idée de la vidéo"
+              : "Passage du livre"}
           </p>
           <div className="mt-4 whitespace-pre-wrap break-words font-serif text-[1.08rem] leading-8 text-[var(--ink)]">
             {note.extractedText}

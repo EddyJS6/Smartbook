@@ -1,6 +1,8 @@
 # Architecture de BrainBook
 
-BrainBook suit une approche **mobile-first** et **local-first**. L’interface doit rester rapide et utilisable sur Safari iPhone, y compris lorsque le réseau est absent ou instable.
+BrainBook suit une approche **mobile-first** et **local-first** pour les livres,
+les vidéos YouTube et leurs notes. L’interface doit rester rapide et utilisable
+sur Safari iPhone, y compris lorsque le réseau est absent ou instable.
 
 ## Source de données locale
 
@@ -15,21 +17,38 @@ La base s’appelle `brainbook`. Aucun livre, aucune couverture et aucune note n
 
 ## Schéma IndexedDB
 
-La version 1, déjà diffusée, déclare uniquement `books` et `images`. Elle reste inchangée dans le code. La **version 2** conserve ces deux tables et ajoute `bookNotes`. La **version 3** ajoute uniquement les structures techniques de sauvegarde `syncQueue`, `syncMetadata` et `localSafetyBackups`. La **version 4** ajoute `noteReadingMetadata` sans modifier les notes existantes. Lors de chaque migration, les données historiques sont conservées et les nouvelles entités synchronisables sont placées dans l’Outbox.
+La version 1, déjà diffusée, déclare uniquement `books` et `images`. Elle reste
+inchangée dans le code. La **version 2** conserve ces deux tables et ajoute
+`bookNotes`. La **version 3** ajoute uniquement les structures techniques de
+sauvegarde `syncQueue`, `syncMetadata` et `localSafetyBackups`. La **version
+4** ajoute `noteReadingMetadata`. La **version 5** ajoute le type de contenu et
+les informations YouTube aux ressources, ainsi que le titre des notes, sans
+supprimer ni réécrire les objets précédents.
 
 ### Table `books`
 
 | Champ | Type | Rôle |
 | --- | --- | --- |
 | `id` | UUID | Clé primaire générée côté client |
+| `contentType` | `book` ou `video` | Type d’affichage et capacités disponibles |
 | `title` | string | Titre normalisé et obligatoire |
 | `author` | string | Auteur normalisé et obligatoire |
 | `coverImageId` | UUID ou `null` | Référence vers `images.id` |
+| `youtubeUrl` | string ou `null` | URL canonique d’une vidéo |
+| `youtubeVideoId` | string ou `null` | Identifiant YouTube validé |
+| `thumbnailUrl` | string ou `null` | Miniature publique déterministe |
 | `status` | `to_read`, `reading`, `finished` | Statut technique stable |
 | `createdAt` | date ISO | Date de création immuable |
 | `updatedAt` | date ISO | Date de dernière modification |
 
 Index : clé unique `id`, puis `updatedAt`, `title`, `author` et `status`.
+
+Le nom historique de la table reste `books` pour préserver toutes les
+migrations et relations déjà diffusées. Une vidéo est une ressource typée dans
+cette table : elle ne possède ni Blob de couverture ni scanner. Son titre est
+récupéré côté serveur par l’endpoint oEmbed fixe de YouTube. Le navigateur
+n’envoie jamais le lien fourni vers une destination arbitraire : le serveur
+extrait d’abord un identifiant de 11 caractères et construit l’URL canonique.
 
 ### Table `images`
 
@@ -50,11 +69,12 @@ Les images ne sont jamais stockées en Base64 ni incorporées dans un objet `Boo
 | --- | --- | --- |
 | `id` | UUID | Clé primaire générée côté client |
 | `bookId` | UUID | Référence obligatoire vers `books.id` |
+| `title` | string | Titre facultatif, limité à 160 caractères |
 | `extractedText` | string | Passage saisi manuellement ou extrait plus tard |
 | `personalReflection` | string | Réflexion personnelle |
 | `pageNumber` | string ou `null` | Page ou référence libre, par exemple `p. 42` ou `chapitre 3` |
 | `tags` | string[] | Tags normalisés et dédupliqués sans tenir compte de la casse |
-| `sourceType` | `manual`, `scan`, `import` | Provenance stable de la note |
+| `sourceType` | `manual`, `scan`, `voice`, `import` | Provenance stable de la note |
 | `sourceImageId` | UUID ou `null` | Emplacement réservé à l’image source d’un futur scan |
 | `createdAt` | date ISO | Date de création immuable |
 | `updatedAt` | date ISO | Date de dernière modification |
@@ -62,6 +82,12 @@ Les images ne sont jamais stockées en Base64 ni incorporées dans un objet `Boo
 Index : clé unique `id`, puis `bookId`, `createdAt` et `updatedAt`. Les tags restent un tableau embarqué, car leur faible volume et la recherche locale en mémoire ne justifient pas une table de jointure.
 
 Une note est valide si elle contient au moins un passage ou une réflexion. Les deux champs peuvent coexister. Le nombre de notes est toujours calculé depuis `bookNotes` et n’est jamais dupliqué dans `Book`.
+
+Le titre ne remplace pas le contenu et reste facultatif pour préserver les
+notes historiques. La dictée vocale ajoute du texte dans la réflexion, puis
+utilise exactement le même `NoteRepository` que la saisie manuelle. Une note
+vidéo ne peut pas recevoir la provenance `scan`; la règle est appliquée à la
+fois dans l’interface et le repository.
 
 Le formulaire permet de créer un tag personnalisé ou de choisir une suggestion.
 Les tags personnalisés récemment utilisés sont dérivés des notes existantes et
@@ -211,6 +237,39 @@ RLS est activé sur les trois tables. Les seules policies accordent au rôle
 `authenticated` les opérations SELECT, INSERT, UPDATE et DELETE lorsque
 `auth.uid() = user_id`. Le rôle `anon` ne reçoit aucun droit sur les données
 personnelles.
+
+La migration `20260724110000_add_videos_voice_and_note_titles.sql` ajoute les
+colonnes vidéo et le titre de note aux tables existantes. Les vidéos restent
+donc couvertes par les mêmes policies RLS et les notes conservent leur clé
+étrangère propriétaire. Les contraintes distantes exigent des URL YouTube et
+de miniature canoniques, un identifiant valide et interdisent une couverture
+privée sur une vidéo.
+
+## Vidéos YouTube
+
+L’accueil affiche par défaut tous les contenus et permet de filtrer livres ou
+vidéos. L’ajout d’une vidéo demande seulement son lien et le nom choisi par
+l’utilisateur. `GET /api/youtube-metadata` valide les formats `watch`,
+`youtu.be`, `shorts`, `live` et `embed`, appelle le seul endpoint oEmbed de
+YouTube, puis renvoie titre, identifiant, URL et miniature canoniques.
+
+Le lien, le titre, l’auteur et la miniature sont enregistrés immédiatement
+dans IndexedDB avant toute synchronisation. La miniature reste une ressource
+publique YouTube : si elle n’est pas disponible hors ligne, l’interface montre
+un placeholder sans bloquer la vidéo ni ses notes.
+
+## Dictée vocale
+
+Le bouton « Dicter ma note » utilise `SpeechRecognition` ou son préfixe
+historique `webkitSpeechRecognition` lorsqu’il est exposé par Safari. Il est
+déclenché exclusivement par un geste utilisateur afin que le navigateur gère
+l’autorisation du microphone. Seuls les résultats finalisés sont ajoutés au
+champ « Ma réflexion ».
+
+BrainBook ne crée aucun `MediaRecorder`, ne stocke aucun fichier audio et
+n’envoie lui-même aucun audio à Supabase ou OpenAI. Selon le navigateur, le
+service de reconnaissance vocale du système peut utiliser le réseau. En cas
+d’indisponibilité ou de refus de permission, la saisie clavier reste intacte.
 
 ### Couvertures privées
 

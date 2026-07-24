@@ -22,6 +22,9 @@ export type IconName =
   | "reader"
   | "shuffle"
   | "trash"
+  | "video"
+  | "play"
+  | "microphone"
   | "zoom-in"
   | "zoom-out";
 
@@ -141,6 +144,19 @@ const paths: Record<IconName, React.ReactNode> = {
     <>
       <path d="M16 3h5v5M4 20 21 3" />
       <path d="M21 16v5h-5M15 15l6 6M4 4l5 5" />
+    </>
+  ),
+  video: (
+    <>
+      <rect x="3" y="5" width="14" height="14" rx="2" />
+      <path d="m17 10 4-2v8l-4-2z" />
+    </>
+  ),
+  play: <path d="m9 7 8 5-8 5z" />,
+  microphone: (
+    <>
+      <rect x="9" y="3" width="6" height="11" rx="3" />
+      <path d="M5 11a7 7 0 0 0 14 0M12 18v3M9 21h6" />
     </>
   ),
   trash: (

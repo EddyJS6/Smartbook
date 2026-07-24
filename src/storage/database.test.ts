@@ -40,7 +40,7 @@ describe("BrainBookDatabase migrations", () => {
     await Promise.all(databasesToDelete.splice(0).map((name) => Dexie.delete(name)));
   });
 
-  it("conserve les livres et crée l’Outbox lors du passage de v1 à v4", async () => {
+  it("conserve les livres et crée l’Outbox lors du passage de v1 à v5", async () => {
     const name = `brainbook-migration-test-${crypto.randomUUID()}`;
     databasesToDelete.push(name);
     const legacy = new LegacyBrainBookDatabase(name);
@@ -60,8 +60,14 @@ describe("BrainBookDatabase migrations", () => {
     const migrated = new BrainBookDatabase(name);
     await migrated.open();
 
-    expect(migrated.verno).toBe(4);
-    expect(await migrated.books.get(existingBook.id)).toEqual(existingBook);
+    expect(migrated.verno).toBe(5);
+    expect(await migrated.books.get(existingBook.id)).toEqual({
+      ...existingBook,
+      contentType: "book",
+      youtubeUrl: null,
+      youtubeVideoId: null,
+      thumbnailUrl: null,
+    });
     expect(await migrated.bookNotes.count()).toBe(0);
     expect(await migrated.syncQueue.toArray()).toMatchObject([
       {
@@ -81,7 +87,7 @@ describe("BrainBookDatabase migrations", () => {
     migrated.close();
   });
 
-  it("initialise les métadonnées sans modifier les notes existantes", async () => {
+  it("initialise les métadonnées et le titre vide sans perdre les notes", async () => {
     const name = `brainbook-reading-migration-${crypto.randomUUID()}`;
     databasesToDelete.push(name);
     const legacy = new LegacyV3BrainBookDatabase(name);
@@ -104,7 +110,10 @@ describe("BrainBookDatabase migrations", () => {
 
     const migrated = new BrainBookDatabase(name);
     await migrated.open();
-    expect(await migrated.bookNotes.get(note.id)).toEqual(note);
+    expect(await migrated.bookNotes.get(note.id)).toEqual({
+      ...note,
+      title: "",
+    });
     expect(await migrated.noteReadingMetadata.get(note.id)).toMatchObject({
       noteId: note.id,
       isFavorite: false,

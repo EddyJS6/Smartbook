@@ -6,6 +6,7 @@ import type {
 } from "@/domain/models";
 import { createEntityId } from "@/domain/id";
 import {
+  normalizeNoteTitle,
   normalizeMultilineText,
   normalizePageReference,
   normalizeTags,
@@ -26,6 +27,7 @@ import { NoteReadingMetadataRepository } from "@/storage/repositories/note-readi
 
 function normalizeInput(input: BookNoteInput): BookNoteInput {
   return {
+    title: normalizeNoteTitle(input.title ?? ""),
     extractedText: normalizeMultilineText(input.extractedText),
     personalReflection: normalizeMultilineText(input.personalReflection),
     pageNumber: normalizePageReference(input.pageNumber ?? ""),
@@ -52,7 +54,13 @@ export class NoteRepository {
           if (!book) {
             throw new BrainBookStorageError(
               "not_found",
-              "Ce livre n’existe plus dans votre bibliothèque.",
+              "Ce contenu n’existe plus dans votre bibliothèque.",
+            );
+          }
+          if (sourceType === "scan" && book.contentType === "video") {
+            throw new BrainBookStorageError(
+              "validation",
+              "Le scanner n’est pas disponible pour les vidéos.",
             );
           }
 
@@ -142,7 +150,7 @@ export class NoteRepository {
           if (!book) {
             throw new BrainBookStorageError(
               "not_found",
-              "Le livre associé à cette note n’existe plus.",
+              "Le contenu associé à cette note n’existe plus.",
             );
           }
 

@@ -69,6 +69,41 @@ describe("BookRepository", () => {
     expect(updated?.createdAt).toBe(created.createdAt);
   });
 
+  it("crée une vidéo YouTube sans Blob de couverture", async () => {
+    const created = await repository.createVideo({
+      title: "  Une vidéo utile ",
+      author: "  Ada Lovelace ",
+      youtubeUrl: "https://www.youtube.com/watch?v=M7lc1UVf-VE",
+      youtubeVideoId: "M7lc1UVf-VE",
+      thumbnailUrl: "https://i.ytimg.com/vi/M7lc1UVf-VE/hqdefault.jpg",
+    });
+
+    expect(created).toMatchObject({
+      contentType: "video",
+      title: "Une vidéo utile",
+      author: "Ada Lovelace",
+      coverImageId: null,
+      status: "to_read",
+    });
+    expect(await database.images.count()).toBe(0);
+    expect(await database.syncQueue.get(`book:${created.id}`)).toMatchObject({
+      operation: "upsert",
+    });
+  });
+
+  it("refuse une vidéo dont le lien et l’identifiant ne correspondent pas", async () => {
+    await expect(
+      repository.createVideo({
+        title: "Vidéo",
+        author: "Autrice",
+        youtubeUrl: "https://www.youtube.com/watch?v=M7lc1UVf-VE",
+        youtubeVideoId: "aaaaaaaaaaa",
+        thumbnailUrl: "https://i.ytimg.com/vi/aaaaaaaaaaa/hqdefault.jpg",
+      }),
+    ).rejects.toMatchObject({ kind: "validation" });
+    expect(await database.books.count()).toBe(0);
+  });
+
   it("remplace une couverture sans laisser l’ancienne image", async () => {
     const created = await repository.create(
       {

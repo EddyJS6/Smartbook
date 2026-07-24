@@ -284,6 +284,42 @@ describe("SyncService integration", () => {
     });
   });
 
+  it("sauvegarde une vidéo, son titre et une note vocale", async () => {
+    const fake = createFakeSupabase();
+    const service = new SyncService(database, () => fake.client, () => true);
+    const books = new BookRepository(database);
+    const notes = new NoteRepository(database);
+    const video = await books.createVideo({
+      title: "Vidéo utile",
+      author: "Une autrice",
+      youtubeUrl: "https://www.youtube.com/watch?v=M7lc1UVf-VE",
+      youtubeVideoId: "M7lc1UVf-VE",
+      thumbnailUrl: "https://i.ytimg.com/vi/M7lc1UVf-VE/hqdefault.jpg",
+    });
+    await notes.create(
+      video.id,
+      {
+        title: "À retenir",
+        extractedText: "",
+        personalReflection: "Une note dictée.",
+        pageNumber: "04:20",
+        tags: [],
+      },
+      "voice",
+    );
+
+    await service.backupLocalData(userId);
+
+    expect(fake.tables.books[0]).toMatchObject({
+      content_type: "video",
+      youtube_video_id: "M7lc1UVf-VE",
+    });
+    expect(fake.tables.book_notes[0]).toMatchObject({
+      title: "À retenir",
+      source_type: "voice",
+    });
+  });
+
   it("restaure atomiquement une bibliothèque distante et garde une sauvegarde locale", async () => {
     const remoteBookId = "40000000-0000-4000-8000-000000000000";
     const remoteNoteId = "50000000-0000-4000-8000-000000000000";

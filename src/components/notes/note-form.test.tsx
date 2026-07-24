@@ -126,6 +126,31 @@ describe("NoteForm scan mode", () => {
     );
   });
 
+  it("affiche le titre et la dictée, mais jamais le scanner pour une vidéo", () => {
+    act(() =>
+      root.render(
+        <NoteForm
+          mode="create"
+          book={{
+            ...book,
+            contentType: "video",
+            youtubeUrl: "https://www.youtube.com/watch?v=M7lc1UVf-VE",
+            youtubeVideoId: "M7lc1UVf-VE",
+            thumbnailUrl:
+              "https://i.ytimg.com/vi/M7lc1UVf-VE/hqdefault.jpg",
+          }}
+        />,
+      ),
+    );
+
+    expect(document.querySelector("#note-title")).toBeInstanceOf(
+      HTMLInputElement,
+    );
+    expect(document.querySelector("#scan-camera-image")).toBeNull();
+    expect(document.body.textContent).toContain("Dicter ma note");
+    expect(document.body.textContent).toContain("Extrait ou idée de la vidéo");
+  });
+
   it("explique un fichier invalide au moment de l’envoi", async () => {
     const input = document.querySelector("#scan-camera-image");
     expect(input).toBeInstanceOf(HTMLInputElement);

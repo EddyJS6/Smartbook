@@ -30,12 +30,15 @@ npx supabase db push
 ```
 
 Les migrations
-`supabase/migrations/20260723173000_create_brainbook_backup.sql` et
-`supabase/migrations/20260723210000_create_note_reading_metadata.sql` créent :
+`supabase/migrations/20260723173000_create_brainbook_backup.sql`,
+`supabase/migrations/20260723210000_create_note_reading_metadata.sql` et
+`supabase/migrations/20260724110000_add_videos_voice_and_note_titles.sql`
+créent ou étendent :
 
 - `public.books` ;
 - `public.book_notes` ;
 - `public.note_reading_metadata` pour les favoris et l’historique de relecture ;
+- les ressources vidéo YouTube, les titres de notes et la provenance vocale ;
 - les contraintes, index et triggers ;
 - toutes les policies RLS ;
 - le bucket privé `book-covers` ;
@@ -139,6 +142,8 @@ Exécuter les blocs dans SQL Editor :
 
 Le fichier `supabase/tests/note_reading_metadata_rls_validation.sql` complète
 la procédure pour les favoris et compteurs de lecture.
+Le fichier `supabase/tests/video_rls_validation.sql` vérifie qu’une vidéo et
+sa note vocale restent invisibles à un second compte.
 
 Tester aussi Storage depuis deux sessions navigateur distinctes :
 

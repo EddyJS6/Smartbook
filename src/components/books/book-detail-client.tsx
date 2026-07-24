@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { BookCover } from "@/components/books/book-cover";
+import { ContentArtwork } from "@/components/books/content-artwork";
 import { BookNotesSection } from "@/components/notes/book-notes-section";
 import { BackLink } from "@/components/ui/back-link";
 import { Icon } from "@/components/ui/icon";
@@ -28,13 +28,19 @@ export function BookDetailClient() {
   const [notice, setNotice] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const isVideo = book?.contentType === "video";
+  const contentType = book?.contentType;
 
   useEffect(() => {
+    if (status !== "ready") return;
     const parameters = new URLSearchParams(window.location.search);
     let nextNotice: string | null = null;
 
     if (parameters.get("created") === "1") {
-      nextNotice = "Le livre a bien été ajouté à votre bibliothèque.";
+      nextNotice =
+        contentType === "video"
+          ? "La vidéo a bien été ajoutée à votre bibliothèque."
+          : "Le livre a bien été ajouté à votre bibliothèque.";
     } else if (parameters.get("updated") === "1") {
       nextNotice = "Les modifications ont bien été enregistrées.";
     } else if (parameters.get("noteCreated") === "1") {
@@ -59,13 +65,13 @@ export function BookDetailClient() {
     return () => {
       if (noticeTimer) window.clearTimeout(noticeTimer);
     };
-  }, []);
+  }, [contentType, status]);
 
   const deleteBook = async () => {
     if (!book || isDeleting) return;
 
     const confirmed = window.confirm(
-      `Supprimer « ${book.title} » ? Sa couverture et toutes ses notes disparaîtront immédiatement de cet appareil, puis de la sauvegarde cloud lors de la prochaine synchronisation.`,
+      `Supprimer « ${book.title} » ? ${book.contentType === "video" ? "La vidéo" : "Le livre, sa couverture"} et toutes ses notes disparaîtront immédiatement de cet appareil, puis de la sauvegarde cloud lors de la prochaine synchronisation.`,
     );
     if (!confirmed) return;
 
@@ -75,11 +81,15 @@ export function BookDetailClient() {
     try {
       const deleted = await bookRepository.delete(book.id);
       if (!deleted) {
-        setDeleteError("Ce livre n’existe plus dans votre bibliothèque.");
+        setDeleteError(
+          `Ce ${book.contentType === "video" ? "contenu vidéo" : "livre"} n’existe plus dans votre bibliothèque.`,
+        );
         setIsDeleting(false);
         return;
       }
-      router.replace("/?deleted=1");
+      router.replace(
+        `/?deleted=${book.contentType === "video" ? "video" : "book"}`,
+      );
     } catch (deleteFailure) {
       setDeleteError(reportStorageError(deleteFailure).message);
       setIsDeleting(false);
@@ -109,10 +119,10 @@ export function BookDetailClient() {
             <Icon name="book" size={25} />
           </span>
           <h1 className="mt-5 text-2xl font-semibold tracking-[-0.03em]">
-            Livre introuvable
+            Contenu introuvable
           </h1>
           <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
-            Ce livre a peut-être été supprimé ou son adresse n’est plus valide.
+            Ce contenu a peut-être été supprimé ou son adresse n’est plus valide.
           </p>
           <Link
             href="/"
@@ -155,13 +165,15 @@ export function BookDetailClient() {
             <Icon name="more" size={22} />
           </summary>
           <div className="absolute top-12 right-0 z-20 w-52 overflow-hidden rounded-2xl border border-[var(--line)] bg-[var(--card)] p-1.5 shadow-[0_12px_32px_rgb(48_39_30_/_0.14)]">
-            <Link
-              href={`/books/${book.id}/edit`}
-              className="flex min-h-11 items-center gap-2.5 rounded-xl px-3 text-sm font-semibold text-[var(--ink)]"
-            >
-              <Icon name="edit" size={17} />
-              Modifier
-            </Link>
+            {!isVideo ? (
+              <Link
+                href={`/books/${book.id}/edit`}
+                className="flex min-h-11 items-center gap-2.5 rounded-xl px-3 text-sm font-semibold text-[var(--ink)]"
+              >
+                <Icon name="edit" size={17} />
+                Modifier
+              </Link>
+            ) : null}
             <button
               type="button"
               onClick={() => void deleteBook()}
@@ -169,7 +181,9 @@ export function BookDetailClient() {
               className="flex min-h-11 w-full items-center gap-2.5 rounded-xl px-3 text-left text-sm font-semibold text-[var(--clay)] disabled:opacity-60"
             >
               <Icon name="trash" size={17} />
-              {isDeleting ? "Suppression…" : "Supprimer le livre"}
+              {isDeleting
+                ? "Suppression…"
+                : `Supprimer ${isVideo ? "la vidéo" : "le livre"}`}
             </button>
           </div>
         </details>
@@ -187,13 +201,15 @@ export function BookDetailClient() {
       ) : null}
 
       <section className="pt-7 text-center">
-        <BookCover
-          book={book}
+        <ContentArtwork
+          content={book}
           priority
-          className="mx-auto aspect-[2/3] w-[min(58vw,15rem)] rounded-[1.8rem] shadow-[0_16px_38px_rgb(48_39_30_/_0.18)]"
+          className={`mx-auto w-full rounded-[1.8rem] shadow-[0_16px_38px_rgb(48_39_30_/_0.18)] ${
+            isVideo ? "aspect-video" : "aspect-[2/3] max-w-[15rem]"
+          }`}
         />
         <span className="mt-7 inline-flex rounded-full bg-[var(--moss-soft)] px-3 py-1.5 text-[0.68rem] font-bold tracking-[0.05em] text-[var(--moss)] uppercase">
-          {bookStatusLabels[book.status]}
+          {isVideo ? "Vidéo YouTube" : bookStatusLabels[book.status]}
         </span>
         <h1 className="balance mt-4 text-[2rem] leading-[1.08] font-semibold tracking-[-0.04em]">
           {book.title}
@@ -202,9 +218,20 @@ export function BookDetailClient() {
         <p className="mt-4 text-xs text-[#918c81]">
           Ajouté le {formatBookDate(book.createdAt)}
         </p>
+        {isVideo && book.youtubeUrl ? (
+          <a
+            href={book.youtubeUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-5 inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-[#c4302b] px-5 text-sm font-semibold text-white"
+          >
+            <Icon name="play" size={18} />
+            Voir sur YouTube
+          </a>
+        ) : null}
       </section>
 
-      <BookNotesSection bookId={book.id} />
+      <BookNotesSection bookId={book.id} contentType={book.contentType ?? "book"} />
     </div>
   );
 }
