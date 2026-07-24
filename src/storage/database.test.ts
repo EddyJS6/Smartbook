@@ -40,7 +40,7 @@ describe("BrainBookDatabase migrations", () => {
     await Promise.all(databasesToDelete.splice(0).map((name) => Dexie.delete(name)));
   });
 
-  it("conserve les livres et crée l’Outbox lors du passage de v1 à v5", async () => {
+  it("conserve les livres et crée l’Outbox lors du passage de v1 à v6", async () => {
     const name = `brainbook-migration-test-${crypto.randomUUID()}`;
     databasesToDelete.push(name);
     const legacy = new LegacyBrainBookDatabase(name);
@@ -60,7 +60,7 @@ describe("BrainBookDatabase migrations", () => {
     const migrated = new BrainBookDatabase(name);
     await migrated.open();
 
-    expect(migrated.verno).toBe(5);
+    expect(migrated.verno).toBe(6);
     expect(await migrated.books.get(existingBook.id)).toEqual({
       ...existingBook,
       contentType: "book",
@@ -113,6 +113,7 @@ describe("BrainBookDatabase migrations", () => {
     expect(await migrated.bookNotes.get(note.id)).toEqual({
       ...note,
       title: "",
+      formattedContent: null,
     });
     expect(await migrated.noteReadingMetadata.get(note.id)).toMatchObject({
       noteId: note.id,

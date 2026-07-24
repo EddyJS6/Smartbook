@@ -29,10 +29,24 @@ export interface StoredImage {
 
 export type NoteSourceType = "manual" | "scan" | "voice" | "import";
 
+export type NoteTextSize = "small" | "normal" | "large";
+
+export interface NoteTextRun {
+  text: string;
+  bold: boolean;
+  italic: boolean;
+  underline: boolean;
+  size: NoteTextSize;
+}
+
+export type NoteDocument = NoteTextRun[];
+
 export interface BookNote {
   id: UUID;
   bookId: UUID;
   title?: string;
+  /** Missing on notes created before IndexedDB v6. */
+  formattedContent?: NoteDocument | null;
   extractedText: string;
   personalReflection: string;
   pageNumber: string | null;
@@ -75,6 +89,7 @@ export type BookNoteInput = Pick<
   "extractedText" | "personalReflection" | "pageNumber" | "tags"
 > & {
   title?: string;
+  formattedContent?: NoteDocument | null;
 };
 
 export type NoteWithBook = {

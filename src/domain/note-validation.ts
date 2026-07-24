@@ -1,4 +1,8 @@
-import type { BookNoteInput } from "@/domain/models";
+import type { BookNoteInput, NoteDocument } from "@/domain/models";
+import {
+  noteDocumentToPlainText,
+  parseNoteDocument,
+} from "@/domain/note-document";
 
 export const MAX_TAG_LENGTH = 30;
 export const MAX_TAGS = 12;
@@ -9,6 +13,7 @@ export type NoteFormValues = {
   personalReflection: string;
   pageNumber: string;
   tags: string[];
+  formattedContent?: NoteDocument | null;
 };
 
 export type NoteFieldErrors = Partial<Record<"content" | "tags", string>>;
@@ -83,10 +88,25 @@ export function validateTagCandidate(
 }
 
 export function validateNote(values: NoteFormValues): NoteValidationResult {
+  const formattedContent =
+    values.formattedContent === null ||
+    values.formattedContent === undefined
+      ? null
+      : parseNoteDocument(values.formattedContent);
+  const formattedPlainText = formattedContent
+    ? normalizeMultilineText(noteDocumentToPlainText(formattedContent))
+    : "";
   const data: BookNoteInput = {
     title: normalizeNoteTitle(values.title ?? ""),
-    extractedText: normalizeMultilineText(values.extractedText),
-    personalReflection: normalizeMultilineText(values.personalReflection),
+    formattedContent,
+    extractedText:
+      formattedContent === null
+        ? normalizeMultilineText(values.extractedText)
+        : formattedPlainText,
+    personalReflection:
+      formattedContent === null
+        ? normalizeMultilineText(values.personalReflection)
+        : "",
     pageNumber: normalizePageReference(values.pageNumber),
     tags: normalizeTags(values.tags),
   };

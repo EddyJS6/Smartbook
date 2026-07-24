@@ -4,7 +4,12 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ContentArtwork } from "@/components/books/content-artwork";
+import { FormattedNoteContent } from "@/components/notes/formatted-note-content";
 import { TagPill } from "@/components/notes/tag-pill";
+import {
+  noteDocumentToPlainText,
+  noteToDocument,
+} from "@/domain/note-document";
 import { BackLink } from "@/components/ui/back-link";
 import { Icon } from "@/components/ui/icon";
 import { StatusMessage } from "@/components/ui/status-message";
@@ -128,9 +133,7 @@ export function NoteDetailClient() {
     if (noteState.status !== "ready" || isDeleting) return;
 
     const preview =
-      noteState.note.extractedText ||
-      noteState.note.personalReflection ||
-      "cette note";
+      noteDocumentToPlainText(noteToDocument(noteState.note)) || "cette note";
     const shortPreview =
       preview.length > 80 ? `${preview.slice(0, 80)}…` : preview;
     const confirmed = window.confirm(
@@ -326,38 +329,21 @@ export function NoteDetailClient() {
         </div>
       ) : null}
 
-      {note.extractedText ? (
+      {noteToDocument(note).length > 0 ? (
         <article className="mt-7 rounded-[1.8rem] border border-[var(--line)] bg-[var(--card)] p-6">
           <p className="text-[0.68rem] font-bold tracking-[0.12em] text-[var(--clay)] uppercase">
-            {book.contentType === "video"
-              ? "Idée de la vidéo"
-              : "Passage du livre"}
+            Note
           </p>
-          <div className="mt-4 whitespace-pre-wrap break-words font-serif text-[1.08rem] leading-8 text-[var(--ink)]">
-            {note.extractedText}
-          </div>
+          <FormattedNoteContent
+            document={noteToDocument(note)}
+            className="mt-4 break-words leading-8 text-[var(--ink)]"
+          />
           {note.pageNumber ? (
             <p className="mt-5 border-t border-[var(--line)] pt-4 text-xs font-semibold text-[var(--muted)]">
               Page ou référence · {note.pageNumber}
             </p>
           ) : null}
         </article>
-      ) : null}
-
-      {note.personalReflection ? (
-        <section className="mt-5 rounded-[1.8rem] bg-[#ece5da] p-6">
-          <p className="text-[0.68rem] font-bold tracking-[0.12em] text-[var(--moss)] uppercase">
-            Ma réflexion
-          </p>
-          <div className="mt-4 whitespace-pre-wrap break-words text-base leading-7 text-[var(--ink)]">
-            {note.personalReflection}
-          </div>
-          {!note.extractedText && note.pageNumber ? (
-            <p className="mt-5 border-t border-[#d9cebd] pt-4 text-xs font-semibold text-[var(--muted)]">
-              Page ou référence · {note.pageNumber}
-            </p>
-          ) : null}
-        </section>
       ) : null}
 
       {note.tags.length > 0 ? (

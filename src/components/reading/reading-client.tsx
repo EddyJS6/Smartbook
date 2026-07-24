@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { FormattedNoteContent } from "@/components/notes/formatted-note-content";
 import { Icon } from "@/components/ui/icon";
 import { StatusMessage } from "@/components/ui/status-message";
+import { noteToDocument } from "@/domain/note-document";
 import {
   filterIdeas,
   sortIdeas,
@@ -235,27 +237,15 @@ export function ReadingClient() {
           </p>
         </div>
 
-        {current.note.extractedText ? (
+        {noteToDocument(current.note).length > 0 ? (
           <section className="mt-8 rounded-[2rem] border border-[var(--line)] bg-[var(--card)] p-6">
             <p className="text-[0.67rem] font-bold tracking-[0.13em] text-[var(--clay)] uppercase">
-              {current.book.contentType === "video"
-                ? "Idée de la vidéo"
-                : "Passage du livre"}
+              Note
             </p>
-            <div className={`mt-5 whitespace-pre-wrap break-words font-serif text-[var(--ink)] ${textSize}`}>
-              {current.note.extractedText}
-            </div>
-          </section>
-        ) : null}
-
-        {current.note.personalReflection ? (
-          <section className="mt-4 rounded-[2rem] bg-[#ece5da] p-6">
-            <p className="text-[0.67rem] font-bold tracking-[0.13em] text-[var(--moss)] uppercase">
-              Ma réflexion
-            </p>
-            <div className={`mt-5 whitespace-pre-wrap break-words text-[var(--ink)] ${textSize}`}>
-              {current.note.personalReflection}
-            </div>
+            <FormattedNoteContent
+              document={noteToDocument(current.note)}
+              className={`mt-5 break-words text-[var(--ink)] ${textSize}`}
+            />
           </section>
         ) : null}
       </article>

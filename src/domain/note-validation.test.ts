@@ -19,11 +19,37 @@ describe("note validation", () => {
     expect(result.success).toBe(true);
     expect(result.data).toEqual({
       title: "",
+      formattedContent: null,
       extractedText: "Une phrase importante.",
       personalReflection: "",
       pageNumber: "chapitre 3",
       tags: ["Idée"],
     });
+  });
+
+  it("valide un contenu unique mis en forme et conserve sa structure", () => {
+    const formattedContent = [
+      {
+        text: "Une idée importante",
+        bold: true,
+        italic: false,
+        underline: true,
+        size: "large" as const,
+      },
+    ];
+    const result = validateNote({
+      title: "À retenir",
+      formattedContent,
+      extractedText: "",
+      personalReflection: "",
+      pageNumber: "",
+      tags: [],
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.data.formattedContent).toEqual(formattedContent);
+    expect(result.data.extractedText).toBe("Une idée importante");
+    expect(result.data.personalReflection).toBe("");
   });
 
   it("accepte une note composée uniquement d’une réflexion", () => {

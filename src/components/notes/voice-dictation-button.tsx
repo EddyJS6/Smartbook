@@ -69,8 +69,10 @@ function recognitionErrorMessage(code: string): string {
 
 export function VoiceDictationButton({
   onTranscript,
+  compact = false,
 }: {
   onTranscript: (text: string) => void;
+  compact?: boolean;
 }) {
   const recognitionRef = useRef<RecognitionController | null>(null);
   const [isListening, setIsListening] = useState(false);
@@ -134,30 +136,40 @@ export function VoiceDictationButton({
         onClick={isListening ? stop : start}
         disabled={!supported}
         aria-pressed={isListening}
-        className={`flex min-h-14 w-full items-center justify-center gap-3 rounded-2xl px-5 text-sm font-semibold ${
+        className={`flex items-center justify-center rounded-2xl text-sm font-semibold ${
+          compact ? "min-h-11 gap-2 px-3" : "min-h-14 w-full gap-3 px-5"
+        } ${
           isListening
             ? "bg-[var(--clay)] text-white"
             : "border border-[var(--moss)] bg-[var(--card)] text-[var(--moss)]"
         } disabled:border-[var(--line)] disabled:text-[var(--muted)] disabled:opacity-65`}
       >
         <span
-          className={`flex size-9 items-center justify-center rounded-full ${
+          className={`flex items-center justify-center rounded-full ${
+            compact ? "size-7" : "size-9"
+          } ${
             isListening ? "bg-white/15" : "bg-[var(--moss-soft)]"
           }`}
         >
           <Icon name="microphone" size={19} />
         </span>
-        {isListening ? "Arrêter et garder la dictée" : "Dicter ma note"}
+        {isListening
+          ? compact
+            ? "Arrêter"
+            : "Arrêter et garder la dictée"
+          : compact
+            ? "Dicter"
+            : "Dicter ma note"}
       </button>
       <p
         aria-live="polite"
-        className={`mt-2 text-xs leading-5 ${
+        className={`${compact && !error ? "sr-only" : "mt-2 text-xs leading-5"} ${
           error ? "text-[var(--clay)]" : "text-[var(--muted)]"
         }`}
       >
         {error ??
           (isListening
-            ? "Je vous écoute… Le texte apparaît dans « Ma réflexion »."
+            ? "Je vous écoute… Le texte apparaît dans la note."
             : supported
               ? "BrainBook ne conserve pas l’audio. Le service vocal du navigateur peut nécessiter Internet."
               : "La dictée vocale n’est pas prise en charge ici.")}

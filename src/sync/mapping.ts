@@ -19,6 +19,10 @@ import {
   normalizePageReference,
   normalizeTags,
 } from "@/domain/note-validation";
+import {
+  noteDocumentToPlainText,
+  parseNoteDocument,
+} from "@/domain/note-document";
 import type {
   RemoteBookRow,
   RemoteNoteRow,
@@ -158,6 +162,14 @@ export function noteToRemote(note: BookNote, userId: UUID) {
     id: note.id,
     book_id: note.bookId,
     title: note.title ?? "",
+    formatted_content:
+      note.formattedContent?.map((run) => ({
+        text: run.text,
+        bold: run.bold,
+        italic: run.italic,
+        underline: run.underline,
+        size: run.size,
+      })) ?? null,
     extracted_text: note.extractedText,
     personal_reflection: note.personalReflection,
     page_number: note.pageNumber,
@@ -256,9 +268,19 @@ export function remoteNoteToLocal(
     throw new RemoteDataValidationError("Tags distants invalides.");
   }
 
+  const formattedContent =
+    row.formatted_content === null || row.formatted_content === undefined
+      ? null
+      : parseNoteDocument(row.formatted_content);
+  if (row.formatted_content !== null && row.formatted_content !== undefined && !formattedContent) {
+    throw new RemoteDataValidationError("Contenu mis en forme distant invalide.");
+  }
   const extractedText = normalizeMultilineText(row.extracted_text);
   const personalReflection = normalizeMultilineText(row.personal_reflection);
-  if (!extractedText && !personalReflection) {
+  const formattedPlainText = formattedContent
+    ? normalizeMultilineText(noteDocumentToPlainText(formattedContent))
+    : "";
+  if (!extractedText && !personalReflection && !formattedPlainText) {
     throw new RemoteDataValidationError("Une note distante est vide.");
   }
 
@@ -266,7 +288,8 @@ export function remoteNoteToLocal(
     id,
     bookId,
     title: normalizeNoteTitle(row.title ?? ""),
-    extractedText,
+    formattedContent,
+    extractedText: extractedText || formattedPlainText,
     personalReflection,
     pageNumber: normalizePageReference(row.page_number ?? ""),
     tags: normalizeTags(row.tags),

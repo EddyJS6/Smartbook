@@ -69,61 +69,48 @@ describe("NoteForm scan mode", () => {
     );
   });
 
-  it("conserve la réflexion si l’utilisateur referme l’appareil photo", () => {
-    const reflection = document.querySelector("#personal-reflection");
-    expect(reflection).toBeInstanceOf(HTMLTextAreaElement);
+  it("conserve le contenu si l’utilisateur referme l’appareil photo", () => {
+    const editor = document.querySelector('[role="textbox"]');
+    expect(editor).toBeInstanceOf(HTMLDivElement);
 
     act(() => {
-      const setter = Object.getOwnPropertyDescriptor(
-        HTMLTextAreaElement.prototype,
-        "value",
-      )?.set;
-      setter?.call(reflection, "Réflexion à conserver");
-      reflection?.dispatchEvent(new Event("input", { bubbles: true }));
+      if (editor) editor.textContent = "Idée à conserver";
+      editor?.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
     act(() => buttonWithText("Scanner une page").click());
 
-    expect(
-      (document.querySelector("#personal-reflection") as HTMLTextAreaElement)
-        .value,
-    ).toBe("Réflexion à conserver");
+    expect(document.querySelector('[role="textbox"]')?.textContent).toBe(
+      "Idée à conserver",
+    );
   });
 
-  it("permet de créer et sélectionner un tag personnalisé", () => {
-    const tagInput = document.querySelector("#tag-input");
-    expect(tagInput).toBeInstanceOf(HTMLInputElement);
-
-    act(() => {
-      const setter = Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        "value",
-      )?.set;
-      setter?.call(tagInput, "Projet personnel");
-      tagInput?.dispatchEvent(new Event("input", { bubbles: true }));
-      tagInput?.dispatchEvent(
-        new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }),
-      );
-    });
-
-    expect(
-      document.querySelector(
-        'button[aria-label="Supprimer le tag Projet personnel"]',
-      ),
-    ).toBeInstanceOf(HTMLButtonElement);
-    expect((tagInput as HTMLInputElement).value).toBe("");
+  it("ne montre que le titre et un champ unique de prise de note", () => {
+    expect(document.querySelector("#note-title")).toBeInstanceOf(
+      HTMLInputElement,
+    );
+    expect(document.querySelector('[role="textbox"]')).toBeInstanceOf(
+      HTMLDivElement,
+    );
+    expect(document.querySelector("#extracted-text")).toBeNull();
+    expect(document.querySelector("#personal-reflection")).toBeNull();
+    expect(document.querySelector("#page-number")).toBeNull();
+    expect(document.querySelector("#tag-input")).toBeNull();
   });
 
-  it("affiche les suggestions sur plusieurs lignes sans carrousel horizontal", () => {
-    const suggestions = document.querySelector(
-      '[data-testid="tag-suggestions-suggestions"]',
-    );
-
-    expect(suggestions?.className).toContain("flex-wrap");
-    expect(suggestions?.className).not.toContain("overflow-x-auto");
-    expect(document.body.textContent).toContain(
-      "Créer un tag personnalisé",
-    );
+  it("propose le gras, l’italique, le soulignement et trois tailles", () => {
+    for (const label of [
+      "Gras",
+      "Italique",
+      "Souligné",
+      "Petite taille",
+      "Taille normale",
+      "Grande taille",
+    ]) {
+      expect(
+        document.querySelector(`button[aria-label="${label}"]`),
+      ).toBeInstanceOf(HTMLButtonElement);
+    }
   });
 
   it("affiche le titre et la dictée, mais jamais le scanner pour une vidéo", () => {
@@ -147,8 +134,8 @@ describe("NoteForm scan mode", () => {
       HTMLInputElement,
     );
     expect(document.querySelector("#scan-camera-image")).toBeNull();
-    expect(document.body.textContent).toContain("Dicter ma note");
-    expect(document.body.textContent).toContain("Extrait ou idée de la vidéo");
+    expect(document.body.textContent).toContain("Dicter");
+    expect(document.body.textContent).toContain("Écrivez librement");
   });
 
   it("explique un fichier invalide au moment de l’envoi", async () => {

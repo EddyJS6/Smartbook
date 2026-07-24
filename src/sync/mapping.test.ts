@@ -119,7 +119,33 @@ describe("remote mapping", () => {
     };
     expect(remoteNoteToLocal(row, userId, new Set([bookId]))).toEqual({
       ...titledNote,
+      formattedContent: null,
     });
+  });
+
+  it("synchronise la mise en forme structurée d’une note", () => {
+    const formattedNote: BookNote = {
+      ...note,
+      formattedContent: [
+        {
+          text: "Texte souligné",
+          bold: false,
+          italic: true,
+          underline: true,
+          size: "large",
+        },
+      ],
+    };
+    const remote = noteToRemote(formattedNote, userId);
+
+    expect(remote.formatted_content).toEqual(formattedNote.formattedContent);
+    expect(
+      remoteNoteToLocal(
+        { ...remote, server_updated_at: note.updatedAt },
+        userId,
+        new Set([bookId]),
+      ).formattedContent,
+    ).toEqual(formattedNote.formattedContent);
   });
 
   it("refuse une note rattachée à un livre absent", () => {

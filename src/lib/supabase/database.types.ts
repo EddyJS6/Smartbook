@@ -1,3 +1,11 @@
+export type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Json | undefined }
+  | Json[];
+
 export type Database = {
   public: {
     Tables: {
@@ -54,6 +62,7 @@ export type Database = {
           id: string;
           book_id: string;
           title: string;
+          formatted_content: Json | null;
           extracted_text: string;
           personal_reflection: string;
           page_number: string | null;
@@ -69,6 +78,7 @@ export type Database = {
           id: string;
           book_id: string;
           title?: string;
+          formatted_content?: Json | null;
           extracted_text?: string;
           personal_reflection?: string;
           page_number?: string | null;
@@ -82,6 +92,7 @@ export type Database = {
         Update: {
           book_id?: string;
           title?: string;
+          formatted_content?: Json | null;
           extracted_text?: string;
           personal_reflection?: string;
           page_number?: string | null;

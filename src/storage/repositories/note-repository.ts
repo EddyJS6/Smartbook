@@ -12,6 +12,10 @@ import {
   normalizeTags,
 } from "@/domain/note-validation";
 import {
+  noteDocumentToPlainText,
+  parseNoteDocument,
+} from "@/domain/note-document";
+import {
   brainBookDatabase,
   type BrainBookDatabase,
 } from "@/storage/database";
@@ -26,10 +30,26 @@ import {
 import { NoteReadingMetadataRepository } from "@/storage/repositories/note-reading-metadata-repository";
 
 function normalizeInput(input: BookNoteInput): BookNoteInput {
+  const formattedContent =
+    input.formattedContent === null ||
+    input.formattedContent === undefined
+      ? null
+      : parseNoteDocument(input.formattedContent);
+  const formattedPlainText = formattedContent
+    ? normalizeMultilineText(noteDocumentToPlainText(formattedContent))
+    : "";
+
   return {
     title: normalizeNoteTitle(input.title ?? ""),
-    extractedText: normalizeMultilineText(input.extractedText),
-    personalReflection: normalizeMultilineText(input.personalReflection),
+    formattedContent,
+    extractedText:
+      formattedContent === null
+        ? normalizeMultilineText(input.extractedText)
+        : formattedPlainText,
+    personalReflection:
+      formattedContent === null
+        ? normalizeMultilineText(input.personalReflection)
+        : "",
     pageNumber: normalizePageReference(input.pageNumber ?? ""),
     tags: normalizeTags(input.tags),
   };

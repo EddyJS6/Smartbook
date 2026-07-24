@@ -6,6 +6,10 @@ import { NoteCard } from "@/components/notes/note-card";
 import { Icon } from "@/components/ui/icon";
 import { StatusMessage } from "@/components/ui/status-message";
 import {
+  noteDocumentToPlainText,
+  noteToDocument,
+} from "@/domain/note-document";
+import {
   chooseRediscovery,
   collectIdeaTags,
   filterIdeas,
@@ -113,8 +117,7 @@ export function IdeasClient() {
             Une idée à redécouvrir
           </div>
           <p className="mt-4 line-clamp-4 whitespace-pre-line font-serif text-lg leading-7">
-            {rediscovery.note.extractedText ||
-              rediscovery.note.personalReflection}
+            {noteDocumentToPlainText(noteToDocument(rediscovery.note))}
           </p>
           <p className="mt-3 truncate text-xs text-white/70">
             {rediscovery.book.title} · {rediscovery.book.author}

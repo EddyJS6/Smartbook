@@ -3,7 +3,9 @@
 import Link from "next/link";
 import type { Book, BookNote } from "@/domain/models";
 import { ContentArtwork } from "@/components/books/content-artwork";
+import { FormattedNoteContent } from "@/components/notes/formatted-note-content";
 import { TagPill } from "@/components/notes/tag-pill";
+import { noteToDocument } from "@/domain/note-document";
 import { Icon } from "@/components/ui/icon";
 import { formatShortDate } from "@/lib/format-date";
 import { useNoteReadingMetadata } from "@/hooks/use-note-reading-metadata";
@@ -63,21 +65,10 @@ export function NoteCard({ note, book }: NoteCardProps) {
         </div>
       ) : null}
 
-      {note.extractedText ? (
-        <p className="line-clamp-3 whitespace-pre-line font-serif text-[0.98rem] leading-6 text-[var(--ink)]">
-          {note.extractedText}
-        </p>
-      ) : null}
-
-      {note.personalReflection ? (
-        <div
-          className={`line-clamp-2 text-sm leading-5 text-[var(--muted)] ${
-            note.extractedText ? "mt-3 border-l-2 border-[#d8c9b6] pl-3" : ""
-          }`}
-        >
-          {note.personalReflection}
-        </div>
-      ) : null}
+      <FormattedNoteContent
+        document={noteToDocument(note)}
+        className="line-clamp-3 break-words leading-6 text-[var(--ink)]"
+      />
 
       {visibleTags.length > 0 ? (
         <div className="mt-4 flex min-w-0 flex-wrap gap-1.5">

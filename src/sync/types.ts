@@ -72,6 +72,7 @@ export type RemoteNoteRow = {
   user_id: string;
   book_id: string;
   title?: string;
+  formatted_content?: unknown;
   extracted_text: string;
   personal_reflection: string;
   page_number: string | null;

@@ -1,5 +1,9 @@
 import type { NoteWithBook } from "@/domain/models";
 import { normalizeSearchQuery } from "@/domain/book-search";
+import {
+  noteDocumentToPlainText,
+  noteToDocument,
+} from "@/domain/note-document";
 
 export type IdeaFilter =
   | "all"
@@ -47,6 +51,7 @@ export function filterIdeas(
 
     const searchableValues = [
       note.title ?? "",
+      noteDocumentToPlainText(noteToDocument(note)),
       note.extractedText,
       note.personalReflection,
       note.pageNumber ?? "",

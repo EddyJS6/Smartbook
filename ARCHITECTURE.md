@@ -23,7 +23,9 @@ inchangée dans le code. La **version 2** conserve ces deux tables et ajoute
 sauvegarde `syncQueue`, `syncMetadata` et `localSafetyBackups`. La **version
 4** ajoute `noteReadingMetadata`. La **version 5** ajoute le type de contenu et
 les informations YouTube aux ressources, ainsi que le titre des notes, sans
-supprimer ni réécrire les objets précédents.
+supprimer ni réécrire les objets précédents. La **version 6** ajoute le contenu
+de note mis en forme ; les anciennes notes restent intactes et sont lues par
+compatibilité depuis leurs champs historiques.
 
 ### Table `books`
 
@@ -70,29 +72,32 @@ Les images ne sont jamais stockées en Base64 ni incorporées dans un objet `Boo
 | `id` | UUID | Clé primaire générée côté client |
 | `bookId` | UUID | Référence obligatoire vers `books.id` |
 | `title` | string | Titre facultatif, limité à 160 caractères |
-| `extractedText` | string | Passage saisi manuellement ou extrait plus tard |
-| `personalReflection` | string | Réflexion personnelle |
-| `pageNumber` | string ou `null` | Page ou référence libre, par exemple `p. 42` ou `chapitre 3` |
-| `tags` | string[] | Tags normalisés et dédupliqués sans tenir compte de la casse |
+| `formattedContent` | `NoteTextRun[]` ou `null` | Contenu unique structuré : texte, gras, italique, soulignement et taille |
+| `extractedText` | string | Miroir texte brut pour la compatibilité, la recherche et les anciennes notes |
+| `personalReflection` | string | Ancien champ conservé pour ne perdre aucune note diffusée |
+| `pageNumber` | string ou `null` | Ancien champ conservé, mais retiré du formulaire |
+| `tags` | string[] | Anciens tags conservés, mais retirés du formulaire |
 | `sourceType` | `manual`, `scan`, `voice`, `import` | Provenance stable de la note |
 | `sourceImageId` | UUID ou `null` | Emplacement réservé à l’image source d’un futur scan |
 | `createdAt` | date ISO | Date de création immuable |
 | `updatedAt` | date ISO | Date de dernière modification |
 
-Index : clé unique `id`, puis `bookId`, `createdAt` et `updatedAt`. Les tags restent un tableau embarqué, car leur faible volume et la recherche locale en mémoire ne justifient pas une table de jointure.
+Index : clé unique `id`, puis `bookId`, `createdAt` et `updatedAt`.
 
-Une note est valide si elle contient au moins un passage ou une réflexion. Les deux champs peuvent coexister. Le nombre de notes est toujours calculé depuis `bookNotes` et n’est jamais dupliqué dans `Book`.
+Le formulaire présente uniquement un titre et un champ de note. L’éditeur
+stocke une suite de segments strictement validés et n’enregistre jamais de HTML
+arbitraire. Chaque segment porte quatre attributs bornés : `bold`, `italic`,
+`underline` et une taille `small`, `normal` ou `large`. Le texte brut dérivé est
+conservé dans `extractedText` pour la recherche et la compatibilité.
 
 Le titre ne remplace pas le contenu et reste facultatif pour préserver les
-notes historiques. La dictée vocale ajoute du texte dans la réflexion, puis
-utilise exactement le même `NoteRepository` que la saisie manuelle. Une note
-vidéo ne peut pas recevoir la provenance `scan`; la règle est appliquée à la
-fois dans l’interface et le repository.
-
-Le formulaire permet de créer un tag personnalisé ou de choisir une suggestion.
-Les tags personnalisés récemment utilisés sont dérivés des notes existantes et
-reproposés sans nouvelle table. Sur mobile, toutes les suggestions passent
-automatiquement à la ligne ; aucun carrousel horizontal n’est utilisé.
+notes historiques. À la première modification d’une ancienne note, passage et
+réflexion sont réunis dans le document structuré, séparés par une ligne vide ;
+les anciennes pages et tags sont conservés silencieusement. La dictée vocale et
+le scanner alimentent ce même contenu unique et utilisent exactement le même
+`NoteRepository` que la saisie manuelle. Une note vidéo ne peut pas recevoir la
+provenance `scan`; la règle est appliquée à la fois dans l’interface et le
+repository.
 
 ### Table `noteReadingMetadata` — ajoutée en version 4
 
@@ -245,6 +250,12 @@ donc couvertes par les mêmes policies RLS et les notes conservent leur clé
 de miniature canoniques, un identifiant valide et interdisent une couverture
 privée sur une vidéo.
 
+La migration `20260724150000_add_formatted_note_content.sql` ajoute
+`formatted_content` en `jsonb` avec une contrainte imposant un tableau. Le
+client valide ensuite chaque segment et chaque attribut avant de l’intégrer
+dans IndexedDB ; une structure distante invalide est refusée. Les policies RLS
+existantes continuent de protéger cette colonne avec le reste de la note.
+
 ## Vidéos YouTube
 
 L’accueil affiche par défaut tous les contenus et permet de filtrer livres ou
@@ -260,11 +271,11 @@ un placeholder sans bloquer la vidéo ni ses notes.
 
 ## Dictée vocale
 
-Le bouton « Dicter ma note » utilise `SpeechRecognition` ou son préfixe
+Le bouton « Dicter » utilise `SpeechRecognition` ou son préfixe
 historique `webkitSpeechRecognition` lorsqu’il est exposé par Safari. Il est
 déclenché exclusivement par un geste utilisateur afin que le navigateur gère
 l’autorisation du microphone. Seuls les résultats finalisés sont ajoutés au
-champ « Ma réflexion ».
+champ unique de la note.
 
 BrainBook ne crée aucun `MediaRecorder`, ne stocke aucun fichier audio et
 n’envoie lui-même aucun audio à Supabase ou OpenAI. Selon le navigateur, le
@@ -427,8 +438,8 @@ Le texte visible dans la photo est explicitement traité comme une donnée à
 transcrire, jamais comme une instruction. L’IA doit utiliser `[illisible]`
 plutôt que d’inventer un passage. Le résultat reste entièrement éditable.
 « Utiliser la sélection » ou « Utiliser tout le texte » remplit directement le
-même `extractedText` que la saisie manuelle, conserve réflexion, page et tags,
-puis marque le brouillon `sourceType: "scan"`.
+même document que la saisie manuelle, puis marque le brouillon
+`sourceType: "scan"`.
 
 ## Persistance et confidentialité du scan
 
@@ -456,7 +467,7 @@ Certains formats, notamment une image HEIC non décodable par la version de Safa
 
 ## Migrations futures
 
-Les évolutions doivent ajouter une nouvelle déclaration `database.version(n)` et, seulement si nécessaire, une transformation explicite. Une version existante ne doit jamais être réécrite après diffusion. Un test ouvre une base v1 peuplée avec la classe v3 pour vérifier que les données historiques sont conservées et placées dans l’Outbox.
+Les évolutions doivent ajouter une nouvelle déclaration `database.version(n)` et, seulement si nécessaire, une transformation explicite. Une version existante ne doit jamais être réécrite après diffusion. Un test ouvre une base v1 peuplée avec la classe courante pour vérifier que les données historiques sont conservées et placées dans l’Outbox.
 
 Les migrations Supabase vivent dans `supabase/migrations` et sont appliquées au
 projet lié avec `supabase db push`. Elles ne doivent pas être recréées
